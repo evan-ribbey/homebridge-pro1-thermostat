@@ -154,7 +154,7 @@ test('readState parses the shadow state into a snapshot', async () => {
   installGoodFetchMock();
   const clients: FakeMqttClient[] = [];
   const factory = makeFactory(clients, {
-    state: { reported: { at: 72, hs: 68, cs: 74, sys: 1, hum: 45 } },
+    state: { reported: { at: 72, hs: 68, cs: 74, sys: 2, hum: 45 } },
   });
   const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
 
@@ -173,7 +173,7 @@ test('readState in cool mode maps the cool setpoint as the target', async () => 
   installGoodFetchMock();
   const clients: FakeMqttClient[] = [];
   const factory = makeFactory(clients, {
-    state: { reported: { at: 80, hs: 65, cs: 75, sys: 2, hum: 40 } },
+    state: { reported: { at: 80, hs: 65, cs: 75, sys: 1, hum: 40 } },
   });
   const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
 
@@ -189,8 +189,8 @@ test('readState in cool mode maps the cool setpoint as the target', async () => 
 test('setTargetTemperature in heat mode writes only the heat setpoint', async () => {
   installGoodFetchMock();
   const clients: FakeMqttClient[] = [];
-  // shadow/get returns sys=1 (HEAT)
-  const factory = makeFactory(clients, { state: { reported: { sys: 1 } } });
+  // shadow/get returns sys=2 (HEAT on this firmware)
+  const factory = makeFactory(clients, { state: { reported: { sys: 2 } } });
   const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
 
   await provider.setTargetTemperature(22);
@@ -209,8 +209,8 @@ test('setTargetTemperature in heat mode writes only the heat setpoint', async ()
 test('setTargetTemperature in cool mode writes only the cool setpoint', async () => {
   installGoodFetchMock();
   const clients: FakeMqttClient[] = [];
-  // shadow/get returns sys=2 (COOL)
-  const factory = makeFactory(clients, { state: { reported: { sys: 2 } } });
+  // shadow/get returns sys=1 (COOL on this firmware)
+  const factory = makeFactory(clients, { state: { reported: { sys: 1 } } });
   const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
 
   await provider.setTargetTemperature(22);
@@ -241,7 +241,9 @@ test('setTargetHeatingCoolingState maps HomeKit modes 0-3 to desired.sys', async
     const parsed = JSON.parse(client.published[0].payload) as {
       state: { desired: { sys: number } };
     };
-    assert.equal(parsed.state.desired.sys, mode);
+    // HomeKit mode -> device sys: heat(1)->2, cool(2)->1 (verified live)
+    const expectedSys = [0, 2, 1, 3][mode];
+    assert.equal(parsed.state.desired.sys, expectedSys);
   }
 });
 

@@ -83,25 +83,26 @@ const MQTT_TIMEOUT_MS = 5000;
  */
 const SYS_TO_TARGET_MODE: Readonly<Record<number, 0 | 1 | 2 | 3 | null>> = {
   0: 0, // OFF
-  1: 1, // HEAT
-  2: 2, // COOL
+  1: 2, // COOL (verified live: Home Cool -> device sys=1)
+  2: 1, // HEAT (verified live: Home Heat -> device sys=2)
   3: 3, // AUTO
 };
 
 /**
  * PROVISIONAL sys → HomeKit current mode map (verify against device).
- * Only heat and cool are reported; off and auto report null until verified.
+ * Verified live on the T855iSHv2: sys=1 = COOL, sys=2 = HEAT (inverted vs
+ * the T705 convention). Off and auto report null until verified.
  */
 const SYS_TO_CURRENT_MODE: Readonly<Record<number, 0 | 1 | 2 | 3 | null>> = {
-  1: 1, // HEAT
-  2: 2, // COOL
+  1: 2, // COOL
+  2: 1, // HEAT
 };
 
 /** PROVISIONAL HomeKit target mode → sys map (verify against device). */
 const HOMEKIT_TO_SYS: Readonly<Record<0 | 1 | 2 | 3, number>> = {
   0: 0, // OFF
-  1: 1, // HEAT
-  2: 2, // COOL
+  1: 2, // HEAT -> sys 2 (verified live)
+  2: 1, // COOL -> sys 1 (verified live)
   3: 3, // AUTO
 };
 

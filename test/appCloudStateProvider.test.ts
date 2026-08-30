@@ -261,7 +261,7 @@ test('readState logs in once and reuses the cached session across reads', async 
 
 test('readState parses the nested reported shadow into a snapshot', async () => {
   installFetchMock({
-    '/v3/thermostats/t-123': detailResponse({ at: 72, hs: 68, cs: 74, sys: 1, hum: 45 }),
+    '/v3/thermostats/t-123': detailResponse({ at: 72, hs: 68, cs: 74, sys: 2, hum: 45 }),
   });
   const provider = makeProvider();
 
@@ -278,7 +278,7 @@ test('readState parses the nested reported shadow into a snapshot', async () => 
 
 test('readState in cool mode maps the cool setpoint as the target', async () => {
   installFetchMock({
-    '/v3/thermostats/t-123': detailResponse({ at: 80, hs: 65, cs: 75, sys: 2, hum: 40 }),
+    '/v3/thermostats/t-123': detailResponse({ at: 80, hs: 65, cs: 75, sys: 1, hum: 40 }),
   });
   const provider = makeProvider();
 
@@ -292,7 +292,7 @@ test('readState in cool mode maps the cool setpoint as the target', async () => 
 
 test('setTargetTemperature in heat mode writes only the heat setpoint', async () => {
   const fetchMock = installFetchMock({
-    '/v3/thermostats/t-123': detailResponse({ sys: 1 }),
+    '/v3/thermostats/t-123': detailResponse({ sys: 2 }), // HEAT on this firmware
     '/v3/shadow': { status: 200, body: JSON.stringify({ success: true }) },
   });
   const provider = makeProvider();
@@ -311,7 +311,7 @@ test('setTargetTemperature in heat mode writes only the heat setpoint', async ()
 
 test('setTargetTemperature in cool mode writes only the cool setpoint', async () => {
   const fetchMock = installFetchMock({
-    '/v3/thermostats/t-123': detailResponse({ sys: 2 }),
+    '/v3/thermostats/t-123': detailResponse({ sys: 1 }), // COOL on this firmware
     '/v3/shadow': { status: 200, body: JSON.stringify({ success: true }) },
   });
   const provider = makeProvider();
@@ -362,7 +362,8 @@ test('setTargetHeatingCoolingState writes the mapped sys field', async () => {
     const puts = fetchMock.calls.filter((call) => call.method === 'PUT');
     assert.equal(puts.length, mode + 1);
     const desired = JSON.parse(new URL(puts[mode].url).searchParams.get('shadowNewValue') ?? '{}') as Record<string, unknown>;
-    assert.equal(desired.sys, mode);
+    // HomeKit mode -> device sys: heat(1)->2, cool(2)->1 (verified live)
+    assert.equal(desired.sys, [0, 2, 1, 3][mode]);
   }
 });
 
@@ -376,7 +377,7 @@ test('readState rejects with StateProviderUnavailableError on HTTP 500', async (
 });
 
 test('readState unwraps a base64-encoded data payload', async () => {
-  const inner = JSON.stringify({ shadow: { state: { reported: { at: 70, hs: 68, cs: 72, sys: 1, hum: 38 } } } });
+  const inner = JSON.stringify({ shadow: { state: { reported: { at: 70, hs: 68, cs: 72, sys: 2, hum: 38 } } } });
   installFetchMock({
     '/v3/thermostats/t-123': {
       status: 200,

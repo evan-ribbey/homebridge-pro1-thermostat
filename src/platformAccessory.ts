@@ -185,7 +185,7 @@ export class Pro1ThermostatAccessory {
   }
 
   async getTemperatureDisplayUnits(): Promise<CharacteristicValue> {
-    return 0; // 0 = Celsius
+    return 1; // 1 = Fahrenheit (the thermostat reports in °F)
   }
 
   async setTemperatureDisplayUnits(value: CharacteristicValue) {

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import mqtt from 'mqtt';
 
@@ -23,7 +24,7 @@ function resolveCertPath(): URL {
     new URL('../../certs/aws-iot-classic-root.pem', import.meta.url),
     new URL('../../../certs/aws-iot-classic-root.pem', import.meta.url),
   ];
-  const found = candidates.find((candidate) => existsSync(candidate));
+  const found = candidates.find((candidate) => existsSync(fileURLToPath(candidate)));
   if (!found) {
     throw new Error('Could not locate certs/aws-iot-classic-root.pem relative to module');
   }
@@ -156,15 +157,27 @@ export class CloudStateProvider implements ThermostatStateProvider {
   }
 
   /**
-   * Set the target temperature. Documented simplification: both the heat
-   * (hs) and cool (cs) setpoints are set to the same Fahrenheit value so
-   * auto mode behaves sensibly with HomeKit's single setpoint.
+   * Set the target temperature for the currently active mode. The mode is
+   * read from the shadow first so a cool-mode setpoint change only touches
+   * `cs` (and heat only `hs`), rather than silently rewriting both.
    *
-   * @throws {StateProviderUnavailableError} when the shadow/update exchange fails.
+   * @throws {StateProviderUnavailableError} when the shadow exchanges fail.
    */
   public async setTargetTemperature(targetTemperatureCelsius: number): Promise<void> {
     const fahrenheit = celsiusToFahrenheit(targetTemperatureCelsius);
-    await this.shadowUpdate({ desired: { hs: fahrenheit, cs: fahrenheit } });
+    const snapshot = await this.shadowGet();
+    const mode = snapshot.targetHeatingCoolingState;
+
+    if (mode === 2) {
+      // COOL → cool setpoint only
+      await this.shadowUpdate({ desired: { cs: fahrenheit } });
+    } else if (mode === 3) {
+      // AUTO → both setpoints (HomeKit single-setpoint convention)
+      await this.shadowUpdate({ desired: { hs: fahrenheit, cs: fahrenheit } });
+    } else {
+      // OFF / HEAT / unknown → heat setpoint only
+      await this.shadowUpdate({ desired: { hs: fahrenheit } });
+    }
   }
 
   /**
@@ -426,14 +439,27 @@ export class CloudStateProvider implements ThermostatStateProvider {
 
     const at = numberOrNull(state.at);
     const hs = numberOrNull(state.hs);
+    const cs = numberOrNull(state.cs);
     const sys = numberOrNull(state.sys);
     const hum = numberOrNull(state.hum);
 
+    const mode = sys === null ? null : (SYS_TO_TARGET_MODE[sys] ?? null);
+
+    // HomeKit exposes a single TargetTemperature, so pick the setpoint for the
+    // active mode: cool uses the cool setpoint, auto shows whichever stage is
+    // actually calling, everything else uses the heat setpoint.
+    let targetFahrenheit: number | null = hs;
+    if (mode === 2) {
+      targetFahrenheit = cs;
+    } else if (mode === 3 && cs !== null && at !== null && at >= cs) {
+      targetFahrenheit = cs;
+    }
+
     return {
       currentTemperatureCelsius: at === null ? null : fahrenheitToCelsius(at),
-      targetTemperatureCelsius: hs === null ? null : fahrenheitToCelsius(hs),
+      targetTemperatureCelsius: targetFahrenheit === null ? null : fahrenheitToCelsius(targetFahrenheit),
       currentHeatingCoolingState: sys === null ? null : (SYS_TO_CURRENT_MODE[sys] ?? null),
-      targetHeatingCoolingState: sys === null ? null : (SYS_TO_TARGET_MODE[sys] ?? null),
+      targetHeatingCoolingState: mode,
       currentRelativeHumidityPercent: hum,
       isOnline: true,
       readTimestampMs,

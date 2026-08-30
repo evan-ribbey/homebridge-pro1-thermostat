@@ -169,23 +169,61 @@ test('readState parses the shadow state into a snapshot', async () => {
   assert.ok(snapshot.readTimestampMs > 0);
 });
 
-test('setTargetTemperature publishes a dual setpoint shadow/update', async () => {
+test('readState in cool mode maps the cool setpoint as the target', async () => {
   installGoodFetchMock();
   const clients: FakeMqttClient[] = [];
-  const factory = makeFactory(clients, { state: {} });
+  const factory = makeFactory(clients, {
+    state: { reported: { at: 80, hs: 65, cs: 75, sys: 2, hum: 40 } },
+  });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  const snapshot = await provider.readState();
+
+  assert.ok(Math.abs((snapshot.currentTemperatureCelsius ?? 0) - 26.67) < 0.01); // 80°F
+  assert.ok(Math.abs((snapshot.targetTemperatureCelsius ?? 0) - 23.89) < 0.01); // 75°F = cs, not hs
+  assert.equal(snapshot.targetHeatingCoolingState, 2); // COOL
+  assert.equal(snapshot.currentHeatingCoolingState, 2);
+  assert.equal(snapshot.currentRelativeHumidityPercent, 40);
+});
+
+test('setTargetTemperature in heat mode writes only the heat setpoint', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  // shadow/get returns sys=1 (HEAT)
+  const factory = makeFactory(clients, { state: { reported: { sys: 1 } } });
   const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
 
   await provider.setTargetTemperature(22);
 
-  assert.equal(clients.length, 1);
-  const client = clients[0];
-  assert.equal(client.published.length, 1);
-  assert.ok(client.published[0].topic.endsWith('/shadow/update'));
-  const parsed = JSON.parse(client.published[0].payload) as {
-    state: { desired: { hs: number; cs: number } };
+  assert.equal(clients.length, 2); // shadow/get then shadow/update
+  const update = clients[1];
+  assert.equal(update.published.length, 1);
+  assert.ok(update.published[0].topic.endsWith('/shadow/update'));
+  const parsed = JSON.parse(update.published[0].payload) as {
+    state: { desired: { hs?: number; cs?: number } };
   };
   assert.equal(parsed.state.desired.hs, 71.6);
+  assert.equal(parsed.state.desired.cs, undefined);
+});
+
+test('setTargetTemperature in cool mode writes only the cool setpoint', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  // shadow/get returns sys=2 (COOL)
+  const factory = makeFactory(clients, { state: { reported: { sys: 2 } } });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  await provider.setTargetTemperature(22);
+
+  assert.equal(clients.length, 2);
+  const update = clients[1];
+  assert.equal(update.published.length, 1);
+  assert.ok(update.published[0].topic.endsWith('/shadow/update'));
+  const parsed = JSON.parse(update.published[0].payload) as {
+    state: { desired: { hs?: number; cs?: number } };
+  };
   assert.equal(parsed.state.desired.cs, 71.6);
+  assert.equal(parsed.state.desired.hs, undefined);
 });
 
 test('setTargetHeatingCoolingState maps HomeKit modes 0-3 to desired.sys', async () => {

@@ -2,11 +2,13 @@
 
 Homebridge platform plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755).
 
-> **Status: Milestone 2 complete — cloud control works.** The plugin has a clean
-> state-provider architecture, a local-API client, a polling loop, runtime config
-> validation, a unit-test suite, and a working **AWS IoT poll-mode** provider
-> (`provider: "cloud"`) that reads and controls the thermostat using its own
-> device certificate and the AWS IoT Classic Shadow.
+> **Status: Milestone 3 complete — app-cloud REST control works.** The plugin has a
+> clean state-provider architecture, a local-API client, a polling loop, runtime config
+> validation, a unit-test suite, and **two working control paths**: an **AWS IoT
+> poll-mode** provider (`provider: "cloud"`) that reads and controls the thermostat
+> using its own device certificate and the AWS IoT Classic Shadow, and an
+> **app-cloud REST** provider (`provider: "app"`) that authenticates with your PRO1
+> Connect account credentials against `https://api.pro1iaq.com`.
 
 ## What works today
 
@@ -23,6 +25,11 @@ Homebridge platform plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755)
   integration in **poll mode**: self-provisions the device certificate/key from
   the thermostat's local API, reads temperature/mode/humidity via the AWS IoT
   Classic Shadow, and commands setpoint/mode via `shadow/update`.
+- **`AppCloudStateProvider`** (`provider: "app"`) — the PRO1 Connect **app-cloud
+  REST** path: Cognito SRP login with your account credentials, in-memory token
+  caching with transparent refresh, thermostat discovery from the account device
+  list, and shadow reads/writes over `https://api.pro1iaq.com` (no device-kick
+  side effect, works from any network).
 - **Polling loop** (`config.pollingInterval`, default 60s) that pushes state via
   `updateCharacteristic` and degrades gracefully (keeps last-known state) when
   the provider is unavailable.
@@ -36,7 +43,7 @@ Homebridge platform plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755)
 
 - `src/state/localApiStateProvider.ts` — setters still throw
   `StateProviderNotImplementedError` (the local API genuinely can't command the
-  thermostat); use `provider: "cloud"` for control.
+  thermostat); use `provider: "cloud"` or `provider: "app"` for control.
 - The `sys` mode mapping (0=off, 1=heat, 2=cool, 3=auto) is **provisional** —
   verified against a real device for heat; off/cool/auto behavior should be
   confirmed on your own unit.
@@ -70,7 +77,7 @@ Homebridge platform plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755)
 | `thermostats[].port` | number | `80` | Local API port |
 | `thermostats[].model` | string | `T705` | Model (T701 / T705 / T721 / T755) |
 | `thermostats[].pollingInterval` | number | `60` | State polling interval (seconds) |
-| `thermostats[].provider` | string | `local` | `cloud` = AWS IoT shadow (control); `local` = local API (read-only) |
+| `thermostats[].provider` | string | `local` | `app` = PRO1 Connect app-cloud REST (control); `cloud` = AWS IoT shadow (control); `local` = local API (read-only) |
 
 ## Cloud control (poll mode)
 
@@ -97,6 +104,83 @@ after which the device reconnects on its own. A longer `pollingInterval` (e.g.
 **Security note:** the local HTTP API exposes the device's AWS IoT private key
 without authentication — anyone on your LAN could take over cloud control of the
 thermostat. Run this on a trusted network only.
+
+## App cloud (REST)
+
+Set `provider: "app"` on a thermostat entry to control it through the PRO1
+Connect **app-cloud REST API** (`https://api.pro1iaq.com`) using your PRO1
+Connect account credentials. The plugin authenticates against the same AWS
+Cognito user pool the PRO1 Connect app uses (SRP login), caches the session in
+memory with transparent refresh, and reads/commands the thermostat's AWS IoT
+shadow over REST. Unlike the AWS IoT poll-mode path, it never connects as the
+device itself — no device-kick side effect, and it works from any network.
+
+```json
+{
+  "platforms": [
+    {
+      "platform": "Pro1Thermostat",
+      "name": "Pro1 Thermostat",
+      "thermostats": [
+        {
+          "name": "Living Room",
+          "provider": "app",
+          "email": "you@example.com",
+          "password": "your-pro1-connect-password",
+          "thingId": "t-123",
+          "pollingInterval": 120
+        }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `provider` | string | `local` | `app` = PRO1 Connect app-cloud REST API (control) |
+| `email` | string | — | PRO1 Connect account email (**required** when `provider: "app"`) |
+| `password` | string | — | PRO1 Connect account password (**required** when `provider: "app"`; `writeOnly` in the schema) |
+| `thingId` | string | `discover` | Thermostat ID (the IoT thing name) from the app-cloud API; leave blank to auto-discover the first device on the account |
+
+**Credentials note:** `email` and `password` are stored in plaintext in
+`config.json` (standard Homebridge practice). The plugin sends them only to
+Cognito during login, never logs them (the email is truncated to its first two
+characters at most), and redacts them from error messages before logging or
+surfacing. The token cache is in-memory only — a plugin restart performs a fresh
+login.
+
+**What's verified:** real-device observation confirmed the API shapes —
+`GET /v3/thermostats?ownerId={sub}` returns `{statusCode, success, things: [...]}`
+(things top-level, `thingName` doubles as the REST thingId), `GET /v3/thermostats/{thingId}`
+returns `{statusCode, success, data: {shadow: {state: {reported, desired}}}}`,
+and `PUT /v3/shadow?thingId={thingId}&shadowNewValue={url-encoded JSON}` returns
+`{success: true}`. The `sys` mode mapping (0=off, 1=heat, 2=cool, 3=auto) is
+**provisional** — heat was verified against a real device; off/cool/auto should
+be confirmed on your own unit. Unit tests cover login caching, shadow parsing,
+mode-aware setpoints, sys writes, base64-wrapped responses, discovery, token
+refresh, and error sanitization.
+
+### Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| HTTP 401 | Expired/invalid token — the plugin auto-refreshes via the refresh token and falls back to a full SRP re-login; if it persists, re-check `email`/`password` |
+| HTTP 403 | Wrong `email`/`password` for the PRO1 Connect account |
+| `App cloud discovery failed: device list has no thingId` | No thermostats on the account, or the wrong one was picked — set `thingId` explicitly |
+| `setTargetTemperature failed: thermostat is off` | The API refuses setpoints while the unit is off — set a target mode first |
+
+### Real-device smoke test (manual)
+
+1. Add a `provider: "app"` thermostat entry with your PRO1 Connect `email` and
+   `password` (optionally pin `thingId` — find it in the PRO1 Connect app or
+   leave blank to auto-discover).
+2. `npm run build && npm run lint && npm test` — all three must exit 0.
+3. Start Homebridge with the plugin and watch the log for the first poll.
+4. In HomeKit: confirm temperature/mode/humidity appear within one polling
+   interval (~30 s), then change the target temperature and the target mode.
+5. Verify the physical thermostat reflects the change within ~30 s, and that
+   the PRO1 Connect app still shows the device online (no device-kick).
 
 ## Pro1 local API research
 
@@ -140,7 +224,7 @@ npm test          # compile-then-test (node --test on compiled JS)
 - [x] Polling loop + graceful degradation + runtime config validation
 - [x] Unit tests (HTTP client, platform discovery, accessory handlers)
 - [x] Reverse-engineered + implemented the AWS IoT path (`CloudStateProvider`, poll mode)
-- [ ] App-cloud API path (clean concurrent identity — no device-kick side effect)
+- [x] App-cloud API path (clean concurrent identity — no device-kick side effect)
 - [ ] Optional: mDNS/scan discovery instead of manual host config
 
 ## License

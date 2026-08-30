@@ -50,8 +50,24 @@
             "provider": {
               "title": "Provider",
               "type": "string",
-              "enum": ["cloud", "local"],
+              "enum": ["cloud", "local", "app"],
               "default": "local"
+            },
+            "email": {
+              "title": "Email",
+              "type": "string",
+              "description": "Email for the Pro1 app cloud account. Required when provider=app."
+            },
+            "password": {
+              "title": "Password",
+              "type": "string",
+              "writeOnly": true,
+              "description": "Stored in Homebridge config; used for Pro1 app cloud login. Required when provider=app."
+            },
+            "thingId": {
+              "title": "Thermostat ID (override)",
+              "type": "string",
+              "description": "Override thermostat ID; leave blank ('discover') to auto-discover from account."
             }
           }
         }

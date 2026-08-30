@@ -2,7 +2,7 @@ import type { API, Characteristic, DynamicPlatformPlugin, Logging, PlatformAcces
 
 import { Pro1ThermostatAccessory } from './platformAccessory.js';
 import { Pro1Client } from './pro1Client.js';
-import { CloudStateProvider, LocalApiStateProvider } from './state/index.js';
+import { AppCloudStateProvider, CloudStateProvider, LocalApiStateProvider } from './state/index.js';
 import type { ThermostatStateProvider } from './state/index.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
@@ -17,8 +17,14 @@ export interface Pro1ThermostatDeviceConfig {
   model?: string;
   /** Polling interval in seconds (default 60). */
   pollingInterval?: number;
-  /** State provider backend: 'cloud' (AWS IoT shadow via MQTT) or 'local' (default, local HTTP API). */
-  provider?: 'cloud' | 'local';
+  /** Email for the Pro1 app cloud account (required when provider === 'app'). */
+  email?: string;
+  /** Password for the Pro1 app cloud account (required when provider === 'app'). */
+  password?: string;
+  /** Override thermostat ID; if absent or 'discover', auto-discover from the account. */
+  thingId?: string;
+  /** State provider backend: 'cloud' (AWS IoT shadow via MQTT), 'app' (Pro1 app cloud REST), or 'local' (default, local HTTP API). */
+  provider?: 'cloud' | 'local' | 'app';
 }
 
 export interface Pro1PlatformConfig extends PlatformConfig {
@@ -84,14 +90,35 @@ export class Pro1ThermostatPlatform implements DynamicPlatformPlugin {
         continue; // Skip this entry; do not register an accessory for it.
       }
 
+      // App-cloud entries require account credentials; fail hard so the misconfiguration is visible.
+      if (device.provider === 'app') {
+        if (!device.email || typeof device.email !== 'string' || device.email.trim() === '') {
+          throw new Error(`Invalid thermostats entry for "${device.name}": "email" is required and must be a non-empty string when provider is "app".`);
+        }
+        if (!device.password || typeof device.password !== 'string' || device.password.trim() === '') {
+          throw new Error(`Invalid thermostats entry for "${device.name}": "password" is required and must be a non-empty string when provider is "app".`);
+        }
+      }
+
       // generate a unique id from something globally unique, but constant — the host/IP
       const uuid = this.api.hap.uuid.generate(device.host);
 
       // Select the state provider backend: 'cloud' uses the AWS IoT shadow via
-      // MQTT (poll mode); anything else (default 'local') uses the local HTTP API.
+      // MQTT (poll mode), 'app' uses the Pro1 app cloud REST API, and anything
+      // else (default 'local') uses the local HTTP API.
       let stateProvider: ThermostatStateProvider;
       if (device.provider === 'cloud') {
         stateProvider = new CloudStateProvider(device.host, device.port ?? 80, this.log);
+      } else if (device.provider === 'app') {
+        // email/password validated as non-empty strings above when provider === 'app'
+        stateProvider = new AppCloudStateProvider(
+          {
+            email: device.email as string,
+            password: device.password as string,
+            thingId: device.thingId || 'discover',
+          },
+          this.log,
+        );
       } else {
         stateProvider = new LocalApiStateProvider(new Pro1Client(device.host, device.port ?? 80));
       }

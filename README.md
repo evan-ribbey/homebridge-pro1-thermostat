@@ -1,6 +1,25 @@
 # Pro1 Thermostat — Homebridge Plugin
 
+<p align="center">
+
+<a href="https://github.com/<your-github-username>/homebridge-pro1-thermostat"><img alt="GitHub Actions" src="https://github.com/<your-github-username>/homebridge-pro1-thermostat/actions/workflows/build.yml/badge.svg"></a>
+<a href="https://www.npmjs.com/package/homebridge-pro1-thermostat"><img alt="npm version" src="https://badge.fury.io/js/homebridge-pro1-thermostat.svg"></a>
+<a href="https://github.com/homebridge/homebridge/wiki/Verified-Plugins"><img src="https://badgen.net/badge/homebridge/verified/purple" /></a>
+
+</p>
+
 Homebridge platform plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755).
+
+## Installation
+
+```sh
+npm install -g homebridge-pro1-thermostat
+```
+
+> This repository is currently private (Gitea `git.ribbey.net`) and not yet
+> published to npm. Until it is published, install it manually into your
+> Homebridge instance (see the Development section), or mirror the repo to
+> GitHub and publish with `npm publish`.
 
 > **Status: Milestone 3 complete — app-cloud REST control works.** The plugin has a
 > clean state-provider architecture, a local-API client, a polling loop, runtime config

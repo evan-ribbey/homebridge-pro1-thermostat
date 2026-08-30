@@ -1,185 +1,107 @@
-<p align="center">
+# Pro1 Thermostat — Homebridge Plugin
 
-<img src="https://github.com/homebridge/branding/raw/latest/logos/homebridge-wordmark-logo-vertical.png" width="150">
+Homebridge platform plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755).
 
-</p>
+> **Status: initial foundation.** This repo is scaffolded from the official
+> [Homebridge plugin template](https://github.com/homebridge/homebridge-plugin-template)
+> and lays the groundwork for a Pro1 integration. It is not yet a
+> production-ready plugin — see [Roadmap](#roadmap).
 
-<span align="center">
+## What works today
 
-# Homebridge Platform Plugin Template
+- Homebridge **platform** that registers one HomeKit **Thermostat** accessory per
+  thermostat configured in `config.json` (add/remove/restore from cache handled).
+- Full HomeKit Thermostat service surface wired with get/set handlers
+  (Current/Target temperature, Current/Target mode, display units, humidity).
+- **Connectivity check** on startup: the plugin calls the thermostat's documented
+  local API (`GET /sys`) and logs the result, so you can confirm the device is
+  reachable.
+- Config UI schema (host, port, model, polling interval).
 
-</span>
+## What is stubbed (the actual Pro1 integration)
 
-This is a template Homebridge dynamic platform plugin and can be used as a base to help you get started developing your own plugin.
+Pro1 thermostats do **not** expose temperature/mode/setpoint over their
+documented local API. Community research (see below) found only a limited local
+HTTP API — system info, network info, time, and a reboot command — while the
+real control plane runs over **AWS IoT** to the Pro1 cloud. The places where that
+integration goes are marked with `TODO(real integration)` in:
 
-This template should be used in conjunction with the [developer documentation](https://developers.homebridge.io/). A full list of all supported service types, and their characteristics is available on this site.
+- `src/pro1Client.ts` — `readState()`, `setTargetTemperature()`, `setMode()` stubs
+- `src/platformAccessory.ts` — handlers return placeholder state; polling TODO in
+  the constructor
 
-### Clone As Template
+## Configuration
 
-Click the link below to create a new GitHub Repository using this template, or click the *Use This Template* button above.
-
-<span align="center">
-
-### [Create New Repository From Template](https://github.com/homebridge/homebridge-plugin-template/generate)
-
-</span>
-
-### Setup Development Environment
-
-To develop Homebridge plugins you must have Node.js 22 or later installed, and a modern code editor such as [VS Code](https://code.visualstudio.com/). This plugin template uses [TypeScript](https://www.typescriptlang.org/) to make development easier and comes with pre-configured settings for [VS Code](https://code.visualstudio.com/) and ESLint. If you are using VS Code install these extensions:
-
-- [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint)
-
-### Install Development Dependencies
-
-Using a terminal, navigate to the project folder and run this command to install the development dependencies:
-
-```shell
-npm install
-```
-
-### Update package.json
-
-Open the [`package.json`](./package.json) and change the following attributes:
-
-- `name` - this should be prefixed with `homebridge-` or `@username/homebridge-`, is case-sensitive, and contains no spaces nor special characters apart from a dash `-`
-- `displayName` - this is the "nice" name displayed in the Homebridge UI
-- `homepage` - link to your GitHub repo's `README.md`
-- `repository.url` - link to your GitHub repo
-- `bugs.url` - link to your GitHub repo issues page
-- `keywords` - the template ships with `homebridge-plugin` (required) and `supports-hap` (the plugin publishes accessories over HAP, which template-based plugins do). Add `supports-matter` if your plugin also registers Matter accessories itself — see the [Matter Plugins](https://github.com/homebridge/homebridge/wiki/Matter-Plugins) wiki page
-
-When you are ready to publish the plugin you should set `private` to false, or remove the attribute entirely.
-
-### Update Plugin Defaults
-
-Open the [`src/settings.ts`](./src/settings.ts) file and change the default values:
-
-- `PLATFORM_NAME` - Set this to be the name of your platform. This is the name of the platform that users will use to register the plugin in the Homebridge `config.json`.
-- `PLUGIN_NAME` - Set this to be the same name you set in the [`package.json`](./package.json) file.
-
-Open the [`config.schema.json`](./config.schema.json) file and change the following attribute:
-
-- `pluginAlias` - set this to match the `PLATFORM_NAME` you defined in the previous step.
-
-See the [Homebridge API docs](https://developers.homebridge.io/#/config-screen/schema#default-values) for more details on the other attributes you can set in the `config.schema.json` file.
-
-### Build Plugin
-
-TypeScript needs to be compiled into JavaScript before it can run. The following command will compile the contents of your [`src`](./src) directory and put the resulting code into the `dist` folder.
-
-```shell
-npm run build
-```
-
-### Link To Homebridge
-
-Run this command so your global installation of Homebridge can discover the plugin in your development environment:
-
-```shell
-npm link
-```
-
-You can now start Homebridge, use the `-D` flag, so you can see debug log messages in your plugin:
-
-```shell
-homebridge -D
-```
-
-### Watch For Changes and Build Automatically
-
-If you want to have your code compile automatically as you make changes, and restart Homebridge automatically between changes, you first need to add your plugin as a platform in `./test/hbConfig/config.json`:
-```
+```json
 {
-...
-    "platforms": [
+  "platforms": [
+    {
+      "platform": "Pro1Thermostat",
+      "name": "Pro1 Thermostat",
+      "thermostats": [
         {
-            "name": "Config",
-            "port": 8581,
-            "platform": "config"
-        },
-        {
-            "name": "<PLUGIN_NAME>",
-            //... any other options, as listed in config.schema.json ...
-            "platform": "<PLATFORM_NAME>"
+          "name": "Living Room",
+          "host": "192.168.1.50",
+          "port": 80,
+          "model": "T705",
+          "pollingInterval": 60
         }
-    ]
+      ]
+    }
+  ]
 }
 ```
 
-and then you can run:
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | — | Platform display name |
+| `thermostats[].name` | string | — | Accessory name shown in HomeKit |
+| `thermostats[].host` | string | — | Thermostat IP or hostname on the LAN |
+| `thermostats[].port` | number | `80` | Local API port |
+| `thermostats[].model` | string | `T705` | Model (T701 / T705 / T721 / T755) |
+| `thermostats[].pollingInterval` | number | `60` | State polling interval (seconds) — used once the real integration lands |
 
-```shell
-npm run watch
+## Pro1 local API research
+
+Documented local endpoints (from the Home Assistant community
+[thread](https://community.home-assistant.io/t/pro-1-thermostat-local-api/830355)):
+
+| Endpoint | Description |
+|---|---|
+| `GET /sys` | System info (no sensor data) |
+| `GET /sys/network` | Current WiFi info |
+| `GET /sys/scan` | Network scan (provisioning) |
+| `GET /sys/time` | Epoch time |
+| `GET /sys/interface` | `{"interface":"station"}` |
+| `GET /sys/connection` | WiFi auth status flags |
+| `POST /sys/command` | `{"command":"reboot"}` — reboot device |
+| `GET /aws_iot/*` | AWS IoT provisioning (pubCert, thing, region, privKey) |
+
+Key takeaway: temperature/HVAC state is **not** on the local API. The device
+provisions itself into AWS IoT (see the `/aws_iot/*` endpoints), which is how the
+Pro1 app talks to it. A full plugin will likely need to either implement the AWS
+IoT / cloud path or intercept the app's traffic.
+
+References:
+
+- https://community.home-assistant.io/t/pro-1-thermostat-local-api/830355
+- https://medium.com/@karosm/iot-pro1-t701i-wifi-thermostat-part-2-... (firmware dump analysis)
+
+## Development
+
+```bash
+npm install
+npm run build     # tsc → dist/
+npm run lint
 ```
 
-This will launch an instance of Homebridge in debug mode which will restart every time you make a change to the source code. It will load the config stored in the default location under `~/.homebridge`. You may need to stop other running instances of Homebridge while using this command to prevent conflicts. You can adjust the Homebridge startup command in the [`nodemon.json`](./nodemon.json) file.
+## Roadmap
 
-### Customise Plugin
+- [ ] Reverse-engineer / implement the AWS IoT or cloud path in `Pro1Client`
+- [ ] Wire `readState()` + setter stubs to real device calls
+- [ ] Poll on `pollingInterval` and push state via `updateCharacteristic`
+- [ ] Optional: mDNS/scan discovery instead of manual host config
 
-You can now start customising the plugin template to suit your requirements.
+## License
 
-- [`src/platform.ts`](./src/platform.ts) - this is where your device setup and discovery should go.
-- [`src/platformAccessory.ts`](./src/platformAccessory.ts) - this is where your accessory control logic should go, you can rename or create multiple instances of this file for each accessory type you need to implement as part of your platform plugin. You can refer to the [developer documentation](https://developers.homebridge.io/) to see what characteristics you need to implement for each service type.
-- [`config.schema.json`](./config.schema.json) - update the config schema to match the config you expect from the user. See the [Plugin Config Schema Documentation](https://developers.homebridge.io/#/config-screen/schema).
-
-### Versioning Your Plugin
-
-Given a version number `MAJOR`.`MINOR`.`PATCH`, such as `1.4.3`, increment the:
-
-1. **MAJOR** version when you make breaking changes to your plugin,
-2. **MINOR** version when you add functionality in a backwards compatible manner, and
-3. **PATCH** version when you make backwards compatible bug fixes.
-
-You can use the `npm version` command to help you with this:
-
-```shell
-# major update / breaking changes
-npm version major
-
-# minor update / new features
-npm version update
-
-# patch / bugfixes
-npm version patch
-```
-
-### Publish Package
-
-When you are ready to publish your plugin to [npm](https://www.npmjs.com/), make sure you have removed the `private` attribute from the [`package.json`](./package.json) file then run:
-
-```shell
-npm publish
-```
-
-If you are publishing a scoped plugin, i.e. `@username/homebridge-xxx` you will need to add `--access=public` to command the first time you publish.
-
-#### Publishing Beta Versions
-
-You can publish *beta* versions of your plugin for other users to test before you release it to everyone.
-
-```shell
-# create a new pre-release version (eg. 2.1.0-beta.1)
-npm version prepatch --preid beta
-
-# publish to @beta
-npm publish --tag beta
-```
-
-Users can then install the  *beta* version by appending `@beta` to the install command, for example:
-
-```shell
-sudo npm install -g homebridge-example-plugin@beta
-```
-
-### Best Practices
-
-Consider creating your plugin with the [Homebridge Verified](https://github.com/homebridge/plugins) criteria in mind. This will help you to create a plugin that is easy to use and works well with Homebridge.
-You can then submit your plugin to the Homebridge Verified list for review.
-The most up-to-date criteria can be found on the [Verified Plugins](https://github.com/homebridge/plugins/wiki/Verified-Plugins) wiki page.
-
-### Useful Links
-
-Note these links are here for help but are not supported/verified by the Homebridge team
-
-- [Custom Characteristics](https://github.com/homebridge/homebridge-plugin-template/issues/20)
+Apache-2.0 (as per the Homebridge plugin template).

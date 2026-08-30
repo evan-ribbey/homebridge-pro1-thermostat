@@ -1,23 +1,26 @@
 {
-  "name": "homebridge-plugin-name",
-  "displayName": "Plugin Name",
+  "name": "homebridge-pro1-thermostat",
+  "displayName": "Pro1 Thermostat",
   "type": "module",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "A short description about what your plugin does.",
-  "author": "Your Name",
+  "description": "Homebridge plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755).",
+  "author": "Evan Ribbey",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/USERNAME/GITHUB_PROJECT_NAME#readme",
+  "homepage": "https://git.ribbey.net/evan/homebridge-pro1-thermostat#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/USERNAME/GITHUB_PROJECT_NAME.git"
+    "url": "https://git.ribbey.net/evan/homebridge-pro1-thermostat.git"
   },
   "bugs": {
-    "url": "https://github.com/USERNAME/GITHUB_PROJECT_NAME/issues"
+    "url": "https://git.ribbey.net/evan/homebridge-pro1-thermostat/issues"
   },
   "keywords": [
     "homebridge-plugin",
-    "supports-hap"
+    "supports-hap",
+    "thermostat",
+    "pro1",
+    "homekit"
   ],
   "main": "dist/index.js",
   "engines": {
@@ -29,9 +32,6 @@
     "lint": "eslint . --max-warnings=0",
     "prepublishOnly": "npm run lint && npm run build",
     "watch": "npm run build && npm link && nodemon"
-  },
-  "dependencies": {
-    "homebridge-lib": "^8.1.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

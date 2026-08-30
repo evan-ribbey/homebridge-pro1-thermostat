@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "pluginAlias": "Pro1Thermostat",
   "pluginType": "platform",
   "singular": true,
   "strictValidation": false,
@@ -11,7 +11,44 @@
       "name": {
         "title": "Name",
         "type": "string",
-        "default": "Example Dynamic Platform"
+        "default": "Pro1 Thermostat"
+      },
+      "thermostats": {
+        "title": "Thermostats",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "host"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "title": "Thermostat Name",
+              "type": "string",
+              "default": "Living Room"
+            },
+            "host": {
+              "title": "Host / IP Address",
+              "type": "string",
+              "placeholder": "192.168.1.x"
+            },
+            "port": {
+              "title": "Port",
+              "type": "integer",
+              "default": 80
+            },
+            "model": {
+              "title": "Model",
+              "type": "string",
+              "enum": ["T701", "T705", "T721", "T755"],
+              "default": "T705"
+            },
+            "pollingInterval": {
+              "title": "Polling Interval (seconds)",
+              "type": "integer",
+              "default": 60
+            }
+          }
+        }
       }
     }
   }

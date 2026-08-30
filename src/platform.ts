@@ -2,7 +2,8 @@ import type { API, Characteristic, DynamicPlatformPlugin, Logging, PlatformAcces
 
 import { Pro1ThermostatAccessory } from './platformAccessory.js';
 import { Pro1Client } from './pro1Client.js';
-import { LocalApiStateProvider } from './state/index.js';
+import { CloudStateProvider, LocalApiStateProvider } from './state/index.js';
+import type { ThermostatStateProvider } from './state/index.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
 export interface Pro1ThermostatDeviceConfig {
@@ -16,6 +17,8 @@ export interface Pro1ThermostatDeviceConfig {
   model?: string;
   /** Polling interval in seconds (default 60). */
   pollingInterval?: number;
+  /** State provider backend: 'cloud' (AWS IoT shadow via MQTT) or 'local' (default, local HTTP API). */
+  provider?: 'cloud' | 'local';
 }
 
 export interface Pro1PlatformConfig extends PlatformConfig {
@@ -84,8 +87,14 @@ export class Pro1ThermostatPlatform implements DynamicPlatformPlugin {
       // generate a unique id from something globally unique, but constant — the host/IP
       const uuid = this.api.hap.uuid.generate(device.host);
 
-      const client = new Pro1Client(device.host, device.port ?? 80);
-      const stateProvider = new LocalApiStateProvider(client);
+      // Select the state provider backend: 'cloud' uses the AWS IoT shadow via
+      // MQTT (poll mode); anything else (default 'local') uses the local HTTP API.
+      let stateProvider: ThermostatStateProvider;
+      if (device.provider === 'cloud') {
+        stateProvider = new CloudStateProvider(device.host, device.port ?? 80, this.log);
+      } else {
+        stateProvider = new LocalApiStateProvider(new Pro1Client(device.host, device.port ?? 80));
+      }
 
       const existingAccessory = this.accessories.get(uuid);
 

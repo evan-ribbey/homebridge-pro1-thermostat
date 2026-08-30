@@ -46,6 +46,12 @@
               "title": "Polling Interval (seconds)",
               "type": "integer",
               "default": 60
+            },
+            "provider": {
+              "title": "Provider",
+              "type": "string",
+              "enum": ["cloud", "local"],
+              "default": "local"
             }
           }
         }

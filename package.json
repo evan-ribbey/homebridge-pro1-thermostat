@@ -3,7 +3,6 @@
   "displayName": "Pro1 Thermostat",
   "type": "module",
   "version": "0.1.0",
-  "private": true,
   "description": "Homebridge plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755).",
   "author": "Evan Ribbey",
   "license": "Apache-2.0",

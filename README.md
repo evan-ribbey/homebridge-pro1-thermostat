@@ -4,7 +4,6 @@
 
 <a href="https://github.com/<your-github-username>/homebridge-pro1-thermostat"><img alt="GitHub Actions" src="https://github.com/<your-github-username>/homebridge-pro1-thermostat/actions/workflows/build.yml/badge.svg"></a>
 <a href="https://www.npmjs.com/package/homebridge-pro1-thermostat"><img alt="npm version" src="https://badge.fury.io/js/homebridge-pro1-thermostat.svg"></a>
-<a href="https://github.com/homebridge/homebridge/wiki/Verified-Plugins"><img src="https://badgen.net/badge/homebridge/verified/purple" /></a>
 
 </p>
 

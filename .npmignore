@@ -3,6 +3,12 @@ src
 
 # ------------- Defaults ------------- #
 
+# Dev / planning docs
+docs
+PLAN*.md
+REVIEW*.md
+tsconfig.test.json
+
 # gitHub actions
 .github
 

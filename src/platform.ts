@@ -1,6 +1,8 @@
 import type { API, Characteristic, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig, Service } from 'homebridge';
 
 import { Pro1ThermostatAccessory } from './platformAccessory.js';
+import { Pro1Client } from './pro1Client.js';
+import { LocalApiStateProvider } from './state/index.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
 export interface Pro1ThermostatDeviceConfig {
@@ -61,6 +63,7 @@ export class Pro1ThermostatPlatform implements DynamicPlatformPlugin {
 
   /**
    * Registers one Thermostat accessory per entry in `config.thermostats`.
+   * Entries missing a valid `name` or `host` are logged and skipped.
    * Accessories must only be registered once — previously created accessories
    * must not be registered again to prevent "duplicate UUID" errors.
    */
@@ -68,8 +71,21 @@ export class Pro1ThermostatPlatform implements DynamicPlatformPlugin {
     const devices = this.config.thermostats ?? [];
 
     for (const device of devices) {
+      // Runtime config validation: skip entries with a missing/invalid name or host.
+      if (!device.name || typeof device.name !== 'string' || device.name.trim() === '') {
+        this.log.error(`Invalid thermostats entry: "name" is required and must be a non-empty string. Entry: ${JSON.stringify(device)}`);
+        continue; // Skip this entry; do not register an accessory for it.
+      }
+      if (!device.host || typeof device.host !== 'string' || device.host.trim() === '') {
+        this.log.error(`Invalid thermostats entry for "${device.name}": "host" is required and must be a non-empty string. Entry: ${JSON.stringify(device)}`);
+        continue; // Skip this entry; do not register an accessory for it.
+      }
+
       // generate a unique id from something globally unique, but constant — the host/IP
       const uuid = this.api.hap.uuid.generate(device.host);
+
+      const client = new Pro1Client(device.host, device.port ?? 80);
+      const stateProvider = new LocalApiStateProvider(client);
 
       const existingAccessory = this.accessories.get(uuid);
 
@@ -80,7 +96,8 @@ export class Pro1ThermostatPlatform implements DynamicPlatformPlugin {
         existingAccessory.context.device = device;
         this.api.updatePlatformAccessories([existingAccessory]);
 
-        new Pro1ThermostatAccessory(this, existingAccessory);
+        const accessory = new Pro1ThermostatAccessory(this, existingAccessory, device, stateProvider);
+        void accessory.startPolling();
       } else {
         this.log.info('Adding new accessory:', device.name);
 
@@ -89,7 +106,8 @@ export class Pro1ThermostatPlatform implements DynamicPlatformPlugin {
         // store a copy of the device config in the accessory context
         accessory.context.device = device;
 
-        new Pro1ThermostatAccessory(this, accessory);
+        const thermostatAccessory = new Pro1ThermostatAccessory(this, accessory, device, stateProvider);
+        void thermostatAccessory.startPolling();
 
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       }

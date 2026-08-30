@@ -16,20 +16,9 @@
  * IMPORTANT: the documented local API does NOT expose temperature, HVAC mode,
  * or setpoint data. The thermostats talk to the Pro1 cloud over AWS IoT, so a
  * full integration will need the AWS IoT / cloud path (or reverse-engineering
- * the mobile app traffic). The state-access methods below are stubs marking
- * exactly where that work goes.
+ * the mobile app traffic). State access is handled by the state providers in
+ * src/state/ (see LocalApiStateProvider / CloudStateProvider).
  */
-export interface Pro1ThermostatState {
-  /** Current temperature in Celsius. */
-  currentTemperature: number;
-  /** Target temperature in Celsius. */
-  targetTemperature: number;
-  /** HomeKit CurrentHeatingCoolingState value (0=off, 1=heat, 2=cool, 3=auto). */
-  currentMode: number;
-  /** HomeKit TargetHeatingCoolingState value. */
-  targetMode: number;
-}
-
 export class Pro1Client {
   private readonly baseUrl: string;
 
@@ -42,21 +31,15 @@ export class Pro1Client {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    try {
-      const response = await fetch(`${this.baseUrl}${path}`, {
-        ...init,
-        headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`Pro1 ${path}: HTTP ${response.status}`);
-      }
-      return (await response.json()) as T;
-    } finally {
-      clearTimeout(timer);
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    if (!response.ok) {
+      throw new Error(`Pro1 ${path}: HTTP ${response.status}`);
     }
+    return (await response.json()) as T;
   }
 
   /** GET /sys — system info (no sensor data on the local API). */
@@ -64,9 +47,18 @@ export class Pro1Client {
     return this.request('/sys');
   }
 
-  /** GET /sys/time — device epoch time. */
-  async getTime(): Promise<Record<string, unknown>> {
-    return this.request('/sys/time');
+  /**
+   * Fetch the thermostat's local system time via GET /sys/time.
+   * Returns the raw JSON response body.
+   * @throws {Error} on network failure, timeout, or non-200 response.
+   */
+  public async getSystemTime(): Promise<Record<string, unknown>> {
+    const url = `http://${this.host}:${this.port}/sys/time`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(this.timeoutMs) });
+    if (!response.ok) {
+      throw new Error(`Pro1 API GET /sys/time failed: HTTP ${response.status}`);
+    }
+    return (await response.json()) as Record<string, unknown>;
   }
 
   /** POST /sys/command — reboot the thermostat. */
@@ -75,23 +67,5 @@ export class Pro1Client {
       method: 'POST',
       body: JSON.stringify({ command: 'reboot' }),
     });
-  }
-
-  // ---------------------------------------------------------------------------
-  // TODO(real integration): the local API does not expose thermostat state.
-  // Wire these to the AWS IoT / Pro1 cloud path once it is reverse-engineered
-  // (see the /aws_iot/* endpoints and the research links in README.md).
-  // ---------------------------------------------------------------------------
-
-  async readState(): Promise<Pro1ThermostatState> {
-    throw new Error('Not implemented — thermostat state requires the AWS IoT / cloud path');
-  }
-
-  async setTargetTemperature(celsius: number): Promise<void> {
-    throw new Error(`Not implemented — would set target temperature to ${celsius}°C via the AWS IoT / cloud path`);
-  }
-
-  async setMode(homekitMode: number): Promise<void> {
-    throw new Error(`Not implemented — would set mode ${homekitMode} via the AWS IoT / cloud path`);
   }
 }

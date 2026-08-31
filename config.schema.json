@@ -3,6 +3,7 @@
   "pluginType": "platform",
   "singular": true,
   "strictValidation": false,
+  "headerDisplay": "Homebridge plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755). Choose a provider per thermostat: **local** (read-only reachability), **cloud** (AWS IoT, LAN-provisioned, control), or **app** (PRO1 Connect account, control).",
   "schema": {
     "type": "object",
     "required": ["name"],
@@ -18,7 +19,7 @@
         "type": "array",
         "items": {
           "type": "object",
-          "required": ["name", "host"],
+          "required": ["name"],
           "additionalProperties": false,
           "properties": {
             "name": {
@@ -26,15 +27,29 @@
               "type": "string",
               "default": "Living Room"
             },
+            "provider": {
+              "title": "Provider",
+              "type": "string",
+              "enum": ["local", "cloud", "app"],
+              "default": "local",
+              "description": "local = local HTTP API (read-only). cloud = AWS IoT shadow using the device's own certificate (control; briefly interrupts the thermostat's cloud link on every poll). app = PRO1 Connect account over REST (control; no interruption, works off-LAN)."
+            },
             "host": {
               "title": "Host / IP Address",
               "type": "string",
-              "placeholder": "192.168.1.x"
+              "placeholder": "192.168.1.x",
+              "description": "Thermostat address on the LAN. Required for the local and cloud providers; not used by the app provider.",
+              "condition": {
+                "functionBody": "return (model.thermostats && model.thermostats[arrayIndices] && model.thermostats[arrayIndices].provider) !== 'app';"
+              }
             },
             "port": {
               "title": "Port",
               "type": "integer",
-              "default": 80
+              "default": 80,
+              "condition": {
+                "functionBody": "return (model.thermostats && model.thermostats[arrayIndices] && model.thermostats[arrayIndices].provider) !== 'app';"
+              }
             },
             "model": {
               "title": "Model",
@@ -45,29 +60,32 @@
             "pollingInterval": {
               "title": "Polling Interval (seconds)",
               "type": "integer",
-              "default": 60
-            },
-            "provider": {
-              "title": "Provider",
-              "type": "string",
-              "enum": ["cloud", "local", "app"],
-              "default": "local"
+              "description": "Defaults to 60s (local, app) or 120s (cloud). Minimums are enforced: 15s local, 30s app, 60s cloud — each cloud poll briefly disconnects the thermostat from its own cloud link."
             },
             "email": {
               "title": "Email",
               "type": "string",
-              "description": "Email for the Pro1 app cloud account. Required when provider=app."
+              "description": "Email for the Pro1 app cloud account. Required when provider=app.",
+              "condition": {
+                "functionBody": "return (model.thermostats && model.thermostats[arrayIndices] && model.thermostats[arrayIndices].provider) === 'app';"
+              }
             },
             "password": {
               "title": "Password",
               "type": "string",
               "writeOnly": true,
-              "description": "Stored in Homebridge config; used for Pro1 app cloud login. Required when provider=app."
+              "description": "Stored in Homebridge config; used for Pro1 app cloud login. Required when provider=app.",
+              "condition": {
+                "functionBody": "return (model.thermostats && model.thermostats[arrayIndices] && model.thermostats[arrayIndices].provider) === 'app';"
+              }
             },
             "thingId": {
               "title": "Thermostat ID (override)",
               "type": "string",
-              "description": "Override thermostat ID; leave blank ('discover') to auto-discover from account."
+              "description": "Override thermostat ID; leave blank ('discover') to auto-discover from account. Set this explicitly if the account has more than one thermostat.",
+              "condition": {
+                "functionBody": "return (model.thermostats && model.thermostats[arrayIndices] && model.thermostats[arrayIndices].provider) === 'app';"
+              }
             }
           }
         }

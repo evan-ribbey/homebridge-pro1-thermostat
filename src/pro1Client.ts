@@ -23,8 +23,8 @@ export class Pro1Client {
   private readonly baseUrl: string;
 
   constructor(
-    private readonly host: string,
-    private readonly port = 80,
+    host: string,
+    port = 80,
     private readonly timeoutMs = 5000,
   ) {
     this.baseUrl = `http://${host}:${port}`;
@@ -53,12 +53,7 @@ export class Pro1Client {
    * @throws {Error} on network failure, timeout, or non-200 response.
    */
   public async getSystemTime(): Promise<Record<string, unknown>> {
-    const url = `http://${this.host}:${this.port}/sys/time`;
-    const response = await fetch(url, { signal: AbortSignal.timeout(this.timeoutMs) });
-    if (!response.ok) {
-      throw new Error(`Pro1 API GET /sys/time failed: HTTP ${response.status}`);
-    }
-    return (await response.json()) as Record<string, unknown>;
+    return this.request('/sys/time');
   }
 
   /** POST /sys/command — reboot the thermostat. */

@@ -286,3 +286,142 @@ test('readState rejects with StateProviderUnavailableError when provisioning fet
   await assert.rejects(() => provider.readState(), StateProviderUnavailableError);
   assert.equal(factoryCalls, 0, 'no MQTT client should be created when provisioning fails');
 });
+
+test('readState clears a desired entry the device has already satisfied', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  // desired.hs matches reported.hs: the command landed, so the standing
+  // desired now serves only to revert a later manual change at the wall.
+  const factory = makeFactory(clients, {
+    state: { reported: { at: 70, hs: 68, cs: 74, sys: 2 }, desired: { hs: 68 } },
+  });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  const snapshot = await provider.readState();
+
+  assert.equal(clients.length, 2, 'shadow/get then a shadow/update clearing the desired');
+  const update = clients[1];
+  assert.ok(update.published[0].topic.endsWith('/shadow/update'));
+  const parsed = JSON.parse(update.published[0].payload) as {
+    state: { desired: Record<string, unknown> };
+  };
+  assert.deepEqual(parsed.state.desired, { hs: null });
+  // The read still returns the reported state.
+  assert.ok(Math.abs((snapshot.targetTemperatureCelsius ?? 0) - 20) < 0.01);
+});
+
+test('readState leaves an in-flight desired entry alone', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  // desired.hs differs from reported.hs: the command has not been applied yet
+  // and clearing it would cancel the user's pending change.
+  const factory = makeFactory(clients, {
+    state: { reported: { at: 70, hs: 68, sys: 2 }, desired: { hs: 72 } },
+  });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  await provider.readState();
+
+  assert.equal(clients.length, 1, 'no housekeeping update should be sent');
+});
+
+test('readState issues no housekeeping update when the shadow has no desired', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  const factory = makeFactory(clients, { state: { reported: { at: 70, hs: 68, sys: 2 } } });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  await provider.readState();
+
+  assert.equal(clients.length, 1, 'steady state must add no MQTT traffic');
+});
+
+test('a failed desired-clear does not fail the read', async () => {
+  installGoodFetchMock();
+  let call = 0;
+  const factory: MqttClientFactory = () => {
+    call += 1;
+    const client = new FakeMqttClient();
+    if (call === 1) {
+      client.acceptedPayload = { state: { reported: { at: 70, hs: 68, sys: 2 }, desired: { hs: 68 } } };
+      client.connectSoon();
+    } else {
+      // The clearing update errors out.
+      setImmediate(() => client.emit('error', new Error('boom')));
+    }
+    return client;
+  };
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  const snapshot = await provider.readState();
+
+  assert.equal(snapshot.isOnline, true);
+  assert.ok(Math.abs((snapshot.currentTemperatureCelsius ?? 0) - 21.11) < 0.01);
+});
+
+test('readState reports Off as the current state when sys=0', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  const factory = makeFactory(clients, { state: { reported: { at: 70, hs: 68, cs: 74, sys: 0 } } });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  const snapshot = await provider.readState();
+
+  assert.equal(snapshot.currentHeatingCoolingState, 0);
+  assert.equal(snapshot.targetHeatingCoolingState, 0);
+});
+
+test('a setpoint write reuses the mode from a recent poll instead of re-reading', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  const factory = makeFactory(clients, { state: { reported: { at: 70, hs: 68, cs: 74, sys: 1 } } });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  await provider.readState();
+  assert.equal(clients.length, 1);
+
+  await provider.setTargetTemperature(22);
+
+  // Only the update connects: every MQTT exchange briefly displaces the
+  // thermostat's own cloud link, so the extra read is worth avoiding.
+  assert.equal(clients.length, 2, 'the setpoint write must not re-read the shadow');
+  const update = clients[1];
+  assert.ok(update.published[0].topic.endsWith('/shadow/update'));
+  const parsed = JSON.parse(update.published[0].payload) as { state: { desired: { cs?: number; hs?: number } } };
+  assert.equal(parsed.state.desired.cs, 71.6, 'sys=1 is COOL, so the cool setpoint is written');
+  assert.equal(parsed.state.desired.hs, undefined);
+});
+
+test('a setpoint write re-reads the mode when the cache has gone stale', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  const factory = makeFactory(clients, { state: { reported: { at: 70, hs: 68, cs: 74, sys: 1 } } });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  await provider.readState();
+
+  const realNow = Date.now;
+  Date.now = () => realNow() + 60_000; // beyond the mode cache TTL
+  try {
+    await provider.setTargetTemperature(22);
+  } finally {
+    Date.now = realNow;
+  }
+
+  assert.equal(clients.length, 3, 'stale cache must fall back to a fresh shadow/get');
+});
+
+test('commanding a mode primes the cache for a following setpoint write', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  const factory = makeFactory(clients, { state: {} });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  await provider.setTargetHeatingCoolingState(1); // HomeKit HEAT
+  await provider.setTargetTemperature(22);
+
+  assert.equal(clients.length, 2, 'no shadow/get needed: the mode was just commanded');
+  const parsed = JSON.parse(clients[1].published[0].payload) as { state: { desired: { hs?: number; cs?: number } } };
+  assert.equal(parsed.state.desired.hs, 71.6, 'heat mode writes the heat setpoint');
+  assert.equal(parsed.state.desired.cs, undefined);
+});

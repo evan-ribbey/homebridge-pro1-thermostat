@@ -8,23 +8,35 @@
  *   - The Cognito user's `sub` claim is the ownerId used for device discovery;
  *     the discovered IoT thing name doubles as the REST thingId.
  *
- * Token lifecycle (in-memory only, per M3 constraints):
- *   - First operation performs a full SRP login (authenticateUser).
+ * Token lifecycle (in-memory only):
+ *   - First operation performs a full SRP login.
  *   - Subsequent operations reuse the cached access token until it is within
  *     60s of expiry, then transparently refresh via the refresh token.
  *   - If refresh fails, a full SRP re-login is attempted.
  *
+ * SRP is implemented natively in ./cognitoSrp.ts against Node's crypto and
+ * global fetch, rather than via amazon-cognito-identity-js, which dragged in
+ * an end-of-life node-fetch@2 and browser polyfills.
+ *
  * Security: passwords, tokens, and the account email are never logged; error
  * messages are sanitized before being surfaced or logged.
  */
-import {
-  AuthenticationDetails,
-  CognitoUser,
-  CognitoUserPool,
-  CognitoUserSession,
-} from 'amazon-cognito-identity-js';
 import type { Logging } from 'homebridge';
 
+import {
+  CognitoSrpClient,
+  decodeJwtPayload,
+  type CognitoTokens,
+} from './cognitoSrp.js';
+import {
+  HOMEKIT_TO_SYS,
+  SYS_TO_TARGET_MODE,
+  celsiusToFahrenheit,
+  deriveCurrentState,
+  fahrenheitToCelsius,
+  numberOrNull,
+  selectTargetSetpointF,
+} from './modeMap.js';
 import {
   StateProviderUnavailableError,
   ThermostatStateProvider,
@@ -90,44 +102,11 @@ interface AppCloudResponse<T> {
 }
 
 /**
- * PROVISIONAL sys → HomeKit target mode map (mirrors cloudStateProvider).
- * Real device observation showed sys=1 during heat demand; off/cool/auto
- * behavior is not yet verified.
+ * Assumed lifetime for an access token whose payload carries no usable `exp`.
+ * Cognito access tokens are an hour by default; 15 minutes is conservative
+ * without being so short that it churns.
  */
-const SYS_TO_TARGET_MODE: Readonly<Record<number, 0 | 1 | 2 | 3 | null>> = {
-  0: 0, // OFF
-  1: 2, // COOL (verified live: Home Cool -> device sys=1)
-  2: 1, // HEAT (verified live: Home Heat -> device sys=2)
-  3: 3, // AUTO
-};
-
-/**
- * PROVISIONAL sys → HomeKit current mode map (mirrors cloudStateProvider).
- * Verified live on the T855iSHv2: sys=1 = COOL, sys=2 = HEAT (inverted vs
- * the T705 convention). Off and auto report null until verified.
- */
-const SYS_TO_CURRENT_MODE: Readonly<Record<number, 0 | 1 | 2 | 3 | null>> = {
-  1: 2, // COOL
-  2: 1, // HEAT
-};
-
-/** PROVISIONAL HomeKit target mode → sys map (mirrors cloudStateProvider). */
-const HOMEKIT_TO_SYS: Readonly<Record<0 | 1 | 2 | 3, number>> = {
-  0: 0, // OFF
-  1: 2, // HEAT -> sys 2 (verified live)
-  2: 1, // COOL -> sys 1 (verified live)
-  3: 3, // AUTO
-};
-
-/** Fahrenheit → Celsius, rounded to 2 decimals (mirrors cloudStateProvider). */
-function fahrenheitToCelsius(fahrenheit: number): number {
-  return Math.round((((fahrenheit - 32) * 5) / 9) * 100) / 100;
-}
-
-/** Celsius → Fahrenheit, rounded to 1 decimal (mirrors cloudStateProvider). */
-function celsiusToFahrenheit(celsius: number): number {
-  return Math.round(((celsius * 9) / 5 + 32) * 10) / 10;
-}
+const ASSUMED_TOKEN_LIFETIME_MS = 15 * 60_000;
 
 /**
  * A ThermostatStateProvider backed by the PRO1 Connect app-cloud REST API.
@@ -139,18 +118,21 @@ function celsiusToFahrenheit(celsius: number): number {
 export class AppCloudStateProvider implements ThermostatStateProvider {
   private readonly config: AppCloudProviderConfig;
   private readonly log: Logging;
-  private readonly cognitoUser: CognitoUser;
-  private session: CognitoUserSession | null = null;
+  private readonly cognito: CognitoSrpClient;
+  private tokens: CognitoTokens | null = null;
+  /** Kept separately: a refresh response does not reissue the refresh token. */
+  private refreshToken: string | null = null;
   private accessTokenExpiryMs = 0;
   private thingId: string | null = null;
 
-  constructor(config: AppCloudProviderConfig, log: Logging) {
+  /**
+   * @param srpClient Test seam; defaults to a client for the PRO1 user pool.
+   */
+  constructor(config: AppCloudProviderConfig, log: Logging, srpClient?: CognitoSrpClient) {
     this.config = config;
     this.log = log;
-    this.cognitoUser = new CognitoUser({
-      Username: config.email,
-      Pool: new CognitoUserPool(COGNITO_POOL_DATA),
-    });
+    this.cognito = srpClient
+      ?? new CognitoSrpClient(COGNITO_POOL_DATA.UserPoolId, COGNITO_POOL_DATA.ClientId);
   }
 
   /**
@@ -160,10 +142,7 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
    *   thermostat GET fails, or the response has no readable shadow.
    */
   public async readState(): Promise<ThermostatStateSnapshot> {
-    const thingId = await this.resolveThingId();
-    const body = await this.apiGet<ShadowResponse>(`/v3/thermostats/${encodeURIComponent(thingId)}`);
-    const shadow = this.extractShadow(body);
-    return this.convertShadowToSnapshot(shadow, Date.now());
+    return await this.readShadowState(await this.resolveThingId());
   }
 
   /**
@@ -219,11 +198,11 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
    *
    * @throws {StateProviderUnavailableError} when login ultimately fails.
    */
-  private async ensureSession(): Promise<CognitoUserSession> {
-    if (this.session !== null && Date.now() < this.accessTokenExpiryMs - TOKEN_EXPIRY_MARGIN_MS) {
-      return this.session;
+  private async ensureSession(): Promise<CognitoTokens> {
+    if (this.tokens !== null && Date.now() < this.accessTokenExpiryMs - TOKEN_EXPIRY_MARGIN_MS) {
+      return this.tokens;
     }
-    if (this.session === null) {
+    if (this.tokens === null || this.refreshToken === null) {
       return await this.login();
     }
     try {
@@ -235,31 +214,16 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
   }
 
   /**
-   * Full SRP login via Cognito `authenticateUser` (callback-based), wrapped
-   * in a Promise. Caches the session and its access-token expiry on success.
+   * Full SRP login. Caches the tokens and the access-token expiry on success.
    *
    * @throws {StateProviderUnavailableError} with a sanitized message on any
    *   auth failure.
    */
-  private async login(): Promise<CognitoUserSession> {
-    const authenticationDetails = new AuthenticationDetails({
-      Username: this.config.email,
-      Password: this.config.password,
-    });
-
+  private async login(): Promise<CognitoTokens> {
     try {
-      const session = await new Promise<CognitoUserSession>((resolve, reject) => {
-        this.cognitoUser.authenticateUser(authenticationDetails, {
-          onSuccess: (result: CognitoUserSession): void => {
-            resolve(result);
-          },
-          onFailure: (err: unknown): void => {
-            reject(err instanceof Error ? err : new Error(String(err)));
-          },
-        });
-      });
-      this.cacheSession(session);
-      return session;
+      const tokens = await this.cognito.authenticate(this.config.email, this.config.password);
+      this.cacheSession(tokens);
+      return tokens;
     } catch (error) {
       throw new StateProviderUnavailableError(`App cloud login failed: ${this.sanitizeError(error)}`);
     }
@@ -268,33 +232,47 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
   /**
    * Refresh the cached session via its refresh token.
    *
-   * @throws {Error} when there is no cached session or refresh fails (caller
-   *   falls back to a full SRP login).
+   * @throws {Error} when there is no refresh token or the refresh fails
+   *   (caller falls back to a full SRP login).
    */
-  private async refreshSession(): Promise<CognitoUserSession> {
-    if (this.session === null) {
-      throw new Error('cannot refresh without a cached session');
+  private async refreshSession(): Promise<CognitoTokens> {
+    if (this.refreshToken === null) {
+      throw new Error('cannot refresh without a cached refresh token');
     }
-    const refreshToken = this.session.getRefreshToken();
-    const session = await new Promise<CognitoUserSession>((resolve, reject) => {
-      this.cognitoUser.refreshSession(refreshToken, (err: unknown, refreshed: CognitoUserSession) => {
-        if (err) {
-          reject(err instanceof Error ? err : new Error(String(err)));
-          return;
-        }
-        resolve(refreshed);
-      });
-    });
-    this.cacheSession(session);
-    return session;
+    const tokens = await this.cognito.refresh(this.refreshToken);
+    this.cacheSession(tokens);
+    return tokens;
   }
 
-  /** Cache a session and derive the access-token expiry (epoch seconds → ms). */
-  private cacheSession(session: CognitoUserSession): void {
-    this.session = session;
-    const payload = session.getAccessToken().decodePayload();
-    const exp = typeof payload.exp === 'number' ? payload.exp : Number(payload.exp);
-    this.accessTokenExpiryMs = Number.isFinite(exp) ? exp * 1000 : Date.now() + TOKEN_EXPIRY_MARGIN_MS;
+  /**
+   * Cache tokens and derive the access-token expiry (epoch seconds → ms).
+   *
+   * The fallback for a missing/unparseable `exp` must exceed the refresh
+   * margin. Falling back to `now + TOKEN_EXPIRY_MARGIN_MS` made the freshness
+   * check (`now < expiry - margin`) false immediately, so every single request
+   * dragged a token refresh along with it.
+   */
+  private cacheSession(tokens: CognitoTokens): void {
+    this.tokens = tokens;
+    // A refresh response omits the refresh token; keep the one we have.
+    this.refreshToken = tokens.refreshToken ?? this.refreshToken;
+
+    let exp: number = Number.NaN;
+    try {
+      const payload = decodeJwtPayload(tokens.accessToken);
+      exp = typeof payload.exp === 'number' ? payload.exp : Number(payload.exp);
+    } catch {
+      // Fall through to the assumed lifetime below.
+    }
+    // `exp` must be a positive finite number. `Number(null)` is 0, which is
+    // finite — accepting it would pin the expiry to the epoch and refresh on
+    // every single request.
+    if (Number.isFinite(exp) && exp > 0) {
+      this.accessTokenExpiryMs = exp * 1000;
+      return;
+    }
+    this.log.debug('AppCloudStateProvider: access token has no usable exp claim; assuming a 15 minute lifetime');
+    this.accessTokenExpiryMs = Date.now() + ASSUMED_TOKEN_LIFETIME_MS;
   }
 
   /**
@@ -314,7 +292,7 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
     }
 
     const session = await this.ensureSession();
-    const sub = session.getIdToken().decodePayload().sub;
+    const sub = decodeJwtPayload(session.idToken).sub;
     if (typeof sub !== 'string' || sub === '') {
       throw new StateProviderUnavailableError('App cloud discovery failed: id token has no sub claim');
     }
@@ -323,14 +301,27 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
       `/v3/thermostats?ownerId=${encodeURIComponent(sub)}&sortFilter=thingName`,
     );
     const things = body.things;
-    const first = Array.isArray(things) ? things[0] : undefined;
-    const found = first?.thingName;
-    if (typeof found !== 'string' || found === '') {
+    if (!Array.isArray(things)) {
+      throw new StateProviderUnavailableError('App cloud discovery failed: device list is not an array');
+    }
+    const names = things
+      .map((thing) => (typeof thing?.thingName === 'string' ? thing.thingName : ''))
+      .filter((name) => name !== '');
+    if (names.length === 0) {
       throw new StateProviderUnavailableError('App cloud discovery failed: device list has no thingId');
     }
+    // Auto-discovery can only ever pick one device. On a multi-thermostat
+    // account every accessory that omits `thingId` would silently resolve to
+    // this same first device and shadow each other, so say so loudly.
+    if (names.length > 1) {
+      this.log.warn(
+        `AppCloudStateProvider: account has ${names.length} thermostats and no "thingId" is configured; `
+        + `defaulting to "${names[0]}". Set "thingId" per accessory to choose deliberately. Available: ${names.join(', ')}`,
+      );
+    }
 
-    this.thingId = found;
-    return found;
+    this.thingId = names[0];
+    return names[0];
   }
 
   /** GET an app-cloud endpoint with the cached access token. */
@@ -358,8 +349,7 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
   ): Promise<AppCloudResponse<T>> {
     const session = await this.ensureSession();
     const headers: Record<string, string> = {
-      jwt: session.getAccessToken().getJwtToken(),
-      'Content-Type': 'application/json',
+      jwt: session.accessToken,
     };
     const requestInit: RequestInit = {
       method,
@@ -367,6 +357,8 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     };
     if (body !== undefined) {
+      // Only declare a JSON body when one is actually sent.
+      headers['Content-Type'] = 'application/json';
       requestInit.body = JSON.stringify(body);
     }
 
@@ -491,9 +483,6 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
     state: Record<string, unknown>,
     readTimestampMs: number,
   ): ThermostatStateSnapshot {
-    const numberOrNull = (value: unknown): number | null =>
-      typeof value === 'number' && Number.isFinite(value) ? value : null;
-
     const at = numberOrNull(state.at);
     const hs = numberOrNull(state.hs);
     const cs = numberOrNull(state.cs);
@@ -501,18 +490,12 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
     const hum = numberOrNull(state.hum);
 
     const mode = sys === null ? null : (SYS_TO_TARGET_MODE[sys] ?? null);
-
-    let targetFahrenheit: number | null = hs;
-    if (mode === 2) {
-      targetFahrenheit = cs;
-    } else if (mode === 3 && cs !== null && at !== null && at >= cs) {
-      targetFahrenheit = cs;
-    }
+    const targetFahrenheit = selectTargetSetpointF(mode, at, hs, cs);
 
     return {
       currentTemperatureCelsius: at === null ? null : fahrenheitToCelsius(at),
       targetTemperatureCelsius: targetFahrenheit === null ? null : fahrenheitToCelsius(targetFahrenheit),
-      currentHeatingCoolingState: sys === null ? null : (SYS_TO_CURRENT_MODE[sys] ?? null),
+      currentHeatingCoolingState: deriveCurrentState(sys, at, hs, cs),
       targetHeatingCoolingState: mode,
       currentRelativeHumidityPercent: hum,
       isOnline: true,
@@ -532,6 +515,9 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
     if (this.config.email !== '') {
       sanitized = sanitized.split(this.config.email).join('[REDACTED]');
     }
-    return sanitized;
+    // Also strip anything shaped like a JWT. Cognito and the app-cloud API can
+    // echo a token back in an error, and a leaked access token is as good as
+    // the credentials until it expires.
+    return sanitized.replace(/\beyJ[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]+){1,2}\b/g, '[REDACTED_TOKEN]');
   }
 }

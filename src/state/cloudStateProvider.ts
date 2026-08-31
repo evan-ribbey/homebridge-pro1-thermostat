@@ -4,6 +4,15 @@ import { fileURLToPath } from 'node:url';
 import mqtt from 'mqtt';
 
 import {
+  HOMEKIT_TO_SYS,
+  SYS_TO_TARGET_MODE,
+  celsiusToFahrenheit,
+  deriveCurrentState,
+  fahrenheitToCelsius,
+  numberOrNull,
+  selectTargetSetpointF,
+} from './modeMap.js';
+import {
   ThermostatStateProvider,
   ThermostatStateSnapshot,
   StateProviderUnavailableError,
@@ -31,10 +40,16 @@ function resolveCertPath(): URL {
   return found;
 }
 
-const AWS_IOT_ROOT_CA = readFileSync(
-  resolveCertPath(),
-  'utf8',
-);
+/**
+ * Read the bundled root CA lazily and memoize it. Reading at module load meant
+ * a missing/unreadable cert threw while importing the barrel, taking the local
+ * and app-cloud providers down with it even though neither uses the cert.
+ */
+let awsIotRootCa: string | null = null;
+function getAwsIotRootCa(): string {
+  awsIotRootCa ??= readFileSync(resolveCertPath(), 'utf8');
+  return awsIotRootCa;
+}
 
 /**
  * Minimal MQTT client surface used by CloudStateProvider. This is a
@@ -77,43 +92,18 @@ interface ProvisioningCache {
 const MQTT_TIMEOUT_MS = 5000;
 
 /**
- * PROVISIONAL sys → HomeKit target mode map (verify against device).
- * Real device observation showed sys=1 during heat demand; off/cool/auto
- * behavior is not yet verified.
+ * How long the mode read by a poll may be reused for a setpoint write before
+ * re-reading. Kept well under the 60s minimum cloud polling interval so the
+ * cached value is always from the most recent poll.
  */
-const SYS_TO_TARGET_MODE: Readonly<Record<number, 0 | 1 | 2 | 3 | null>> = {
-  0: 0, // OFF
-  1: 2, // COOL (verified live: Home Cool -> device sys=1)
-  2: 1, // HEAT (verified live: Home Heat -> device sys=2)
-  3: 3, // AUTO
-};
+const MODE_CACHE_TTL_MS = 45_000;
 
-/**
- * PROVISIONAL sys → HomeKit current mode map (verify against device).
- * Verified live on the T855iSHv2: sys=1 = COOL, sys=2 = HEAT (inverted vs
- * the T705 convention). Off and auto report null until verified.
- */
-const SYS_TO_CURRENT_MODE: Readonly<Record<number, 0 | 1 | 2 | 3 | null>> = {
-  1: 2, // COOL
-  2: 1, // HEAT
-};
+/** Shadow keys this provider commands, and therefore may need to clear. */
+const MANAGED_DESIRED_KEYS = ['hs', 'cs', 'sys'] as const;
 
-/** PROVISIONAL HomeKit target mode → sys map (verify against device). */
-const HOMEKIT_TO_SYS: Readonly<Record<0 | 1 | 2 | 3, number>> = {
-  0: 0, // OFF
-  1: 2, // HEAT -> sys 2 (verified live)
-  2: 1, // COOL -> sys 1 (verified live)
-  3: 3, // AUTO
-};
-
-/** Fahrenheit → Celsius, rounded to 2 decimals. */
-function fahrenheitToCelsius(fahrenheit: number): number {
-  return Math.round((((fahrenheit - 32) * 5) / 9) * 100) / 100;
-}
-
-/** Celsius → Fahrenheit, rounded to 1 decimal. */
-function celsiusToFahrenheit(celsius: number): number {
-  return Math.round(((celsius * 9) / 5 + 32) * 10) / 10;
+/** Narrow an unknown shadow branch to a plain object, or null. */
+function asObject(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
 }
 
 /**
@@ -134,6 +124,8 @@ export class CloudStateProvider implements ThermostatStateProvider {
   private readonly mqttConnect: MqttClientFactory;
   private readonly log?: StateProviderLogger;
   private provisioningCache: ProvisioningCache | null = null;
+  /** Mode observed by the most recent shadow read, for setpoint writes. */
+  private lastKnownMode: { mode: 0 | 1 | 2 | 3 | null; readAtMs: number } | null = null;
 
   constructor(
     deviceHost: string,
@@ -153,7 +145,8 @@ export class CloudStateProvider implements ThermostatStateProvider {
    *   shadow/get exchange fails.
    */
   public async readState(): Promise<ThermostatStateSnapshot> {
-    await this.getProvisioning();
+    // connectAndWaitForMessage() provisions before it opens a client, so
+    // there is no need to force it first.
     return await this.shadowGet();
   }
 
@@ -166,8 +159,7 @@ export class CloudStateProvider implements ThermostatStateProvider {
    */
   public async setTargetTemperature(targetTemperatureCelsius: number): Promise<void> {
     const fahrenheit = celsiusToFahrenheit(targetTemperatureCelsius);
-    const snapshot = await this.shadowGet();
-    const mode = snapshot.targetHeatingCoolingState;
+    const mode = await this.getTargetModeForWrite();
 
     if (mode === 2) {
       // COOL → cool setpoint only
@@ -189,6 +181,28 @@ export class CloudStateProvider implements ThermostatStateProvider {
    */
   public async setTargetHeatingCoolingState(targetHeatingCoolingState: 0 | 1 | 2 | 3): Promise<void> {
     await this.shadowUpdate({ desired: { sys: HOMEKIT_TO_SYS[targetHeatingCoolingState] } });
+    // The commanded mode is now the one a following setpoint write should use.
+    this.lastKnownMode = { mode: targetHeatingCoolingState, readAtMs: Date.now() };
+  }
+
+  /**
+   * The active mode, needed to decide whether a setpoint write touches `hs`
+   * or `cs`. Reuses the mode from a recent poll when one is available.
+   *
+   * Every MQTT exchange briefly displaces the thermostat's own cloud
+   * connection, so a setpoint change that always did get-then-update
+   * interrupted the device twice. Polling has usually just read the mode
+   * anyway — and it is the same value the user is looking at in the Home app,
+   * since that is what was last pushed to HomeKit. The cache is only trusted
+   * for MODE_CACHE_TTL_MS; beyond that it re-reads.
+   */
+  private async getTargetModeForWrite(): Promise<0 | 1 | 2 | 3 | null> {
+    const cached = this.lastKnownMode;
+    if (cached !== null && Date.now() - cached.readAtMs < MODE_CACHE_TTL_MS) {
+      this.log?.debug(`CloudStateProvider: using the mode from the last poll (${cached.mode}) for this setpoint write`);
+      return cached.mode;
+    }
+    return (await this.shadowGet()).targetHeatingCoolingState;
   }
 
   /**
@@ -292,7 +306,7 @@ export class CloudStateProvider implements ThermostatStateProvider {
       keepalive: 30,
       cert: p.certPem,
       key: p.keyPem,
-      ca: AWS_IOT_ROOT_CA,
+      ca: getAwsIotRootCa(),
       clean: true,
     };
   }
@@ -315,15 +329,60 @@ export class CloudStateProvider implements ThermostatStateProvider {
     // The live shadow/get payload nests values under `reported` (device state)
     // and `desired` (last commanded state). Prefer reported, fall back to
     // desired, then to a flat object for defense in depth.
-    const reported = stateObject.reported;
-    const desired = stateObject.desired;
-    const flatState =
-      typeof reported === 'object' && reported !== null
-        ? (reported as Record<string, unknown>)
-        : typeof desired === 'object' && desired !== null
-          ? (desired as Record<string, unknown>)
-          : stateObject;
-    return this.convertShadowToSnapshot(flatState, Date.now());
+    const reported = asObject(stateObject.reported);
+    const desired = asObject(stateObject.desired);
+    const flatState = reported ?? desired ?? stateObject;
+    const snapshot = this.convertShadowToSnapshot(flatState, Date.now());
+    this.lastKnownMode = { mode: snapshot.targetHeatingCoolingState, readAtMs: Date.now() };
+    await this.clearSatisfiedDesired(reported, desired);
+    return snapshot;
+  }
+
+  /**
+   * Drop `desired` entries the device has already satisfied.
+   *
+   * An AWS IoT Classic Shadow keeps `desired` until it is explicitly nulled,
+   * and the service publishes a delta whenever `desired` and `reported`
+   * diverge. A setpoint this plugin wrote therefore lingers as a standing
+   * order: change the temperature at the wall afterwards and the device gets
+   * a delta putting the old value straight back — the plugin silently undoing
+   * a manual adjustment.
+   *
+   * Clearing a desired entry that already equals `reported` cannot cancel an
+   * in-flight command (an unsatisfied desired still differs from reported, so
+   * it is left alone) and produces no delta of its own. In the steady state
+   * there is nothing to clear and this issues no MQTT traffic at all.
+   *
+   * Failures here are logged and swallowed — a read must not fail because a
+   * housekeeping write did.
+   */
+  private async clearSatisfiedDesired(
+    reported: Record<string, unknown> | null,
+    desired: Record<string, unknown> | null,
+  ): Promise<void> {
+    if (reported === null || desired === null) {
+      return;
+    }
+    const toClear: Record<string, unknown> = {};
+    for (const key of MANAGED_DESIRED_KEYS) {
+      if (desired[key] !== undefined && desired[key] === reported[key]) {
+        toClear[key] = null;
+      }
+    }
+    if (Object.keys(toClear).length === 0) {
+      return;
+    }
+    this.log?.debug(
+      `CloudStateProvider: clearing satisfied shadow desired keys [${Object.keys(toClear).join(', ')}] `
+      + 'so they cannot override a manual change at the thermostat',
+    );
+    try {
+      await this.shadowUpdate({ desired: toClear });
+    } catch (error) {
+      this.log?.debug(
+        `CloudStateProvider: could not clear satisfied desired keys: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**
@@ -365,17 +424,31 @@ export class CloudStateProvider implements ThermostatStateProvider {
     try {
       return await new Promise<Record<string, unknown>>((resolve, reject) => {
         let settled = false;
+        let timer: NodeJS.Timeout | null = null;
 
-        const fail = (message: string): void => {
+        // Every exit path clears the timer. Clearing it only on the success
+        // path left a live 5s timer behind after an error or timeout, holding
+        // the event loop open past a rejection that had already been handled.
+        const settle = (action: () => void): void => {
           if (settled) {
             return;
           }
           settled = true;
-          this.log?.error(`CloudStateProvider: ${message}`);
-          reject(new StateProviderUnavailableError(message));
+          if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          action();
         };
 
-        const timer = setTimeout(() => {
+        const fail = (message: string): void => {
+          settle(() => {
+            this.log?.error(`CloudStateProvider: ${message}`);
+            reject(new StateProviderUnavailableError(message));
+          });
+        };
+
+        timer = setTimeout(() => {
           fail(`MQTT ${operation} timed out after ${MQTT_TIMEOUT_MS}ms waiting for ${acceptedTopic}`);
         }, MQTT_TIMEOUT_MS);
 
@@ -407,18 +480,18 @@ export class CloudStateProvider implements ThermostatStateProvider {
           if (settled || topic !== acceptedTopic) {
             return;
           }
-          clearTimeout(timer);
+          let parsed: unknown;
           try {
-            const parsed: unknown = JSON.parse(payload.toString('utf8'));
-            if (typeof parsed !== 'object' || parsed === null) {
-              fail(`Malformed ${operation} accepted payload: expected JSON object`);
-              return;
-            }
-            settled = true;
-            resolve(parsed as Record<string, unknown>);
+            parsed = JSON.parse(payload.toString('utf8'));
           } catch (error) {
             fail(`Malformed ${operation} accepted payload: ${error instanceof Error ? error.message : String(error)}`);
+            return;
           }
+          if (typeof parsed !== 'object' || parsed === null) {
+            fail(`Malformed ${operation} accepted payload: expected JSON object`);
+            return;
+          }
+          settle(() => resolve(parsed as Record<string, unknown>));
         });
 
         client.on('error', (err: Error) => {
@@ -435,9 +508,6 @@ export class CloudStateProvider implements ThermostatStateProvider {
     state: Record<string, unknown>,
     readTimestampMs: number,
   ): ThermostatStateSnapshot {
-    const numberOrNull = (value: unknown): number | null =>
-      typeof value === 'number' && Number.isFinite(value) ? value : null;
-
     const at = numberOrNull(state.at);
     const hs = numberOrNull(state.hs);
     const cs = numberOrNull(state.cs);
@@ -445,21 +515,12 @@ export class CloudStateProvider implements ThermostatStateProvider {
     const hum = numberOrNull(state.hum);
 
     const mode = sys === null ? null : (SYS_TO_TARGET_MODE[sys] ?? null);
-
-    // HomeKit exposes a single TargetTemperature, so pick the setpoint for the
-    // active mode: cool uses the cool setpoint, auto shows whichever stage is
-    // actually calling, everything else uses the heat setpoint.
-    let targetFahrenheit: number | null = hs;
-    if (mode === 2) {
-      targetFahrenheit = cs;
-    } else if (mode === 3 && cs !== null && at !== null && at >= cs) {
-      targetFahrenheit = cs;
-    }
+    const targetFahrenheit = selectTargetSetpointF(mode, at, hs, cs);
 
     return {
       currentTemperatureCelsius: at === null ? null : fahrenheitToCelsius(at),
       targetTemperatureCelsius: targetFahrenheit === null ? null : fahrenheitToCelsius(targetFahrenheit),
-      currentHeatingCoolingState: sys === null ? null : (SYS_TO_CURRENT_MODE[sys] ?? null),
+      currentHeatingCoolingState: deriveCurrentState(sys, at, hs, cs),
       targetHeatingCoolingState: mode,
       currentRelativeHumidityPercent: hum,
       isOnline: true,

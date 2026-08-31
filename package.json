@@ -2,7 +2,7 @@
   "name": "homebridge-pro1-thermostat",
   "displayName": "Pro1 Thermostat",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Homebridge plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755).",
   "author": "Evan Ribbey",
   "license": "Apache-2.0",
@@ -28,7 +28,7 @@
     "schema": "config.schema.json"
   },
   "engines": {
-    "node": "^22.10.0 || ^24.0.0",
+    "node": "^22 || ^24 || ^26",
     "homebridge": "^1.8.0 || ^2.0.0"
   },
   "scripts": {
@@ -41,6 +41,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
+    "amazon-cognito-identity-js": "^6.3.20",
     "eslint": "^10.9.0",
     "homebridge": "^2.4.0",
     "nodemon": "^3.1.14",
@@ -50,7 +51,6 @@
     "typescript-eslint": "^8.67.0"
   },
   "dependencies": {
-    "amazon-cognito-identity-js": "^6.3.20",
     "mqtt": "^5.15.2"
   }
 }

@@ -1,50 +1,37 @@
-import { createRequire } from 'node:module';
+import { randomBytes, createHmac } from 'node:crypto';
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { Logging } from 'homebridge';
 
-// Type-only imports — erased at compile time, so they never load the real
-// amazon-cognito-identity-js at runtime (the provider module itself is
-// imported dynamically below, after the Cognito mock is installed). Aliased
-// because the runtime values are destructured from the dynamic import.
-import type {
-  AppCloudProviderConfig as AppCloudProviderConfigType,
-  AppCloudStateProvider as AppCloudStateProviderType,
-} from '../src/state/index.js';
+import { AppCloudStateProvider, CognitoSrpClient, StateProviderUnavailableError } from '../src/state/index.js';
+import type { AppCloudProviderConfig } from '../src/state/index.js';
 
 const realFetch = globalThis.fetch;
 
 // ---------------------------------------------------------------------------
-// Cognito module mocking
+// Cognito stubbing
 //
-// AppCloudStateProvider imports { AuthenticationDetails, CognitoUser,
-// CognitoUserPool } from the CommonJS package 'amazon-cognito-identity-js'.
-// Node's ESM→CJS interop exposes those named exports as *live* bindings over
-// module.exports, so swapping the exports via require() before (dynamically)
-// importing the provider stubs out SRP auth entirely: no real network calls,
-// and we can count authenticateUser / refreshSession invocations.
+// The provider now authenticates through the native CognitoSrpClient, so
+// instead of swapping out a library's exports this drives a *real* client
+// against a stubbed Cognito endpoint. The genuine SRP exchange therefore runs
+// on every test that logs in, and the counters below observe it from outside.
 // ---------------------------------------------------------------------------
-
-interface CognitoCallbacks {
-  onSuccess: (session: FakeCognitoUserSession) => void;
-  onFailure: (error: Error) => void;
-}
 
 const cognitoMock = {
   authenticateUserCalls: 0,
   refreshSessionCalls: 0,
-  /** Session exp (epoch seconds) minted for login-created sessions. */
+  /** `exp` (epoch seconds) minted for login-created access tokens. */
   loginSessionExpSeconds: 0,
-  /** Session exp (epoch seconds) minted for refresh-created sessions. */
+  /** `exp` (epoch seconds) minted for refresh-created access tokens. */
   refreshSessionExpSeconds: 0,
   /** id token `sub` claim used for device discovery. */
   idTokenSub: 'user-sub-123',
-  /** When true, authenticateUser invokes onFailure with loginError. */
+  /** When true, InitiateAuth fails with loginError. */
   loginShouldFail: false,
-  /** Error message the fake Cognito surfaces on login failure. */
+  /** Error message the stubbed Cognito surfaces on login failure. */
   loginError: 'NotAuthorizedException: Incorrect username or password.',
-  /** When true, refreshSession invokes the error callback. */
+  /** When true, the refresh exchange fails. */
   refreshShouldFail: false,
 };
 
@@ -63,116 +50,76 @@ function resetCognitoMock(): void {
   cognitoMock.refreshShouldFail = false;
 }
 
-class FakeAccessToken {
-  public constructor(private readonly payload: { exp: number }) {}
-
-  public getJwtToken(): string {
-    return 'fake-access-token';
-  }
-
-  public decodePayload(): { exp: number } {
-    return this.payload;
-  }
+/** Mint an unsigned JWT with the given claims (the provider never verifies). */
+function mintJwt(claims: Record<string, unknown>): string {
+  const encode = (value: unknown): string =>
+    Buffer.from(JSON.stringify(value)).toString('base64url');
+  const body = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode(claims)}`;
+  return `${body}.${createHmac('sha256', 'test').update(body).digest('base64url')}`;
 }
 
-class FakeIdToken {
-  public constructor(private readonly payload: { sub: string }) {}
-
-  public decodePayload(): { sub: string } {
-    return this.payload;
-  }
+function authResult(expSeconds: number, withRefreshToken: boolean): string {
+  return JSON.stringify({
+    AuthenticationResult: {
+      AccessToken: mintJwt(
+        Number.isFinite(expSeconds) ? { exp: expSeconds, token_use: 'access' } : { token_use: 'access' },
+      ),
+      IdToken: mintJwt({ sub: cognitoMock.idTokenSub, token_use: 'id' }),
+      ...(withRefreshToken ? { RefreshToken: 'stub-refresh-token' } : {}),
+    },
+  });
 }
 
-class FakeRefreshToken {
-  public getToken(): string {
-    return 'fake-refresh-token';
-  }
+function cognitoError(message: string): Response {
+  return new Response(
+    JSON.stringify({ __type: 'NotAuthorizedException', message }),
+    { status: 400, headers: { 'x-amzn-errortype': 'NotAuthorizedException:' } },
+  );
 }
 
-/** Minimal CognitoUserSession: access/id/refresh tokens with canned payloads. */
-class FakeCognitoUserSession {
-  public constructor(
-    private readonly expSeconds: number,
-    private readonly sub: string,
-  ) {}
+/** A CognitoSrpClient wired to a stubbed user pool endpoint. */
+function makeCognitoClient(): CognitoSrpClient {
+  const stubFetch = (async (_url: unknown, init?: RequestInit) => {
+    const headers = init?.headers as Record<string, string>;
+    const target = headers['X-Amz-Target'].split('.')[1];
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
 
-  public getAccessToken(): FakeAccessToken {
-    return new FakeAccessToken({ exp: this.expSeconds });
-  }
-
-  public getIdToken(): FakeIdToken {
-    return new FakeIdToken({ sub: this.sub });
-  }
-
-  public getRefreshToken(): FakeRefreshToken {
-    return new FakeRefreshToken();
-  }
-}
-
-/** Fake CognitoUser: counts calls and drives the callback API synchronously. */
-class FakeCognitoUser {
-  public constructor(private readonly config: { Username: string; Pool: unknown }) {
-    void this.config;
-  }
-
-  public authenticateUser(_details: unknown, callbacks: CognitoCallbacks): void {
-    cognitoMock.authenticateUserCalls += 1;
-    if (cognitoMock.loginShouldFail) {
-      callbacks.onFailure(new Error(cognitoMock.loginError));
-      return;
+    if (target === 'InitiateAuth' && body.AuthFlow === 'REFRESH_TOKEN_AUTH') {
+      cognitoMock.refreshSessionCalls += 1;
+      if (cognitoMock.refreshShouldFail) {
+        return cognitoError('Token has expired and cannot be refreshed');
+      }
+      // A refresh never reissues the refresh token.
+      return new Response(authResult(cognitoMock.refreshSessionExpSeconds, false), { status: 200 });
     }
-    callbacks.onSuccess(new FakeCognitoUserSession(cognitoMock.loginSessionExpSeconds, cognitoMock.idTokenSub));
-  }
 
-  public refreshSession(
-    _token: unknown,
-    callback: (error: Error | null, session?: FakeCognitoUserSession) => void,
-  ): void {
-    cognitoMock.refreshSessionCalls += 1;
-    if (cognitoMock.refreshShouldFail) {
-      callback(new Error('Token has expired and cannot be refreshed'));
-      return;
+    if (target === 'InitiateAuth') {
+      cognitoMock.authenticateUserCalls += 1;
+      if (cognitoMock.loginShouldFail) {
+        return cognitoError(cognitoMock.loginError);
+      }
+      return new Response(JSON.stringify({
+        ChallengeName: 'PASSWORD_VERIFIER',
+        ChallengeParameters: {
+          SRP_B: randomBytes(384).toString('hex'),
+          SALT: randomBytes(16).toString('hex'),
+          SECRET_BLOCK: randomBytes(64).toString('base64'),
+          USER_ID_FOR_SRP: cognitoMock.idTokenSub,
+        },
+      }), { status: 200 });
     }
-    callback(null, new FakeCognitoUserSession(cognitoMock.refreshSessionExpSeconds, cognitoMock.idTokenSub));
-  }
+
+    // RespondToAuthChallenge — the SRP maths already ran to get here.
+    return new Response(authResult(cognitoMock.loginSessionExpSeconds, true), { status: 200 });
+  }) as typeof fetch;
+
+  return new CognitoSrpClient('us-west-2_oplIqH10t', 'test-client-id', stubFetch);
 }
 
-const require = createRequire(import.meta.url);
-const realCognito = require('amazon-cognito-identity-js') as {
-  AuthenticationDetails: unknown;
-  CognitoUser: unknown;
-  CognitoUserPool: unknown;
-};
-
-const originalCognito = {
-  AuthenticationDetails: realCognito.AuthenticationDetails,
-  CognitoUser: realCognito.CognitoUser,
-  CognitoUserPool: realCognito.CognitoUserPool,
-};
-
-/** Replace the Cognito exports with fakes before the provider module loads. */
-function installCognitoMock(): void {
-  realCognito.AuthenticationDetails = class FakeAuthenticationDetails {
-    public constructor(private readonly details: { Username: string; Password: string }) {
-      void this.details;
-    }
-  };
-  realCognito.CognitoUser = FakeCognitoUser;
-  realCognito.CognitoUserPool = class FakeCognitoUserPool {
-    public constructor(private readonly poolData: { UserPoolId: string; ClientId: string }) {
-      void this.poolData;
-    }
-  };
-}
-
-installCognitoMock();
 resetCognitoMock();
 
-// Import the provider only after the Cognito mock is in place.
-const { AppCloudStateProvider, StateProviderUnavailableError } = await import('../src/state/index.js');
-
 // ---------------------------------------------------------------------------
-// fetch mocking (mirrors test/cloudStateProvider.test.ts)
+// fetch mocking for the app-cloud REST API
 // ---------------------------------------------------------------------------
 
 interface MockEntry {
@@ -216,7 +163,7 @@ function detailResponse(shadow: Record<string, unknown>): MockEntry {
   };
 }
 
-function makeProvider(overrides: Partial<AppCloudProviderConfigType> = {}): AppCloudStateProviderType {
+function makeProvider(overrides: Partial<AppCloudProviderConfig> = {}): AppCloudStateProvider {
   return new AppCloudStateProvider(
     {
       email: 'user@example.com',
@@ -225,14 +172,12 @@ function makeProvider(overrides: Partial<AppCloudProviderConfigType> = {}): AppC
       ...overrides,
     },
     fakeLog,
+    makeCognitoClient(),
   );
 }
 
 afterEach(() => {
   globalThis.fetch = realFetch;
-  realCognito.AuthenticationDetails = originalCognito.AuthenticationDetails;
-  realCognito.CognitoUser = originalCognito.CognitoUser;
-  realCognito.CognitoUserPool = originalCognito.CognitoUserPool;
   resetCognitoMock();
 });
 
@@ -254,7 +199,7 @@ test('readState logs in once and reuses the cached session across reads', async 
   assert.equal(cognitoMock.refreshSessionCalls, 0);
   assert.equal(fetchMock.calls.length, 3, 'one GET per read');
   for (const call of fetchMock.calls) {
-    assert.equal(call.headers.jwt, 'fake-access-token');
+    assert.match(call.headers.jwt, /^eyJ[\w-]+\.[\w-]+\.[\w-]+$/, 'a JWT access token must be sent');
     assert.equal(call.headers.authorization, undefined, 'access token goes in the jwt header, never Authorization');
   }
 });
@@ -450,4 +395,102 @@ test('login failure rejects with StateProviderUnavailableError and redacted cred
       return true;
     },
   );
+});
+
+/** Capture log lines by level. */
+function makeCapturingLog(): { log: Logging; lines: string[] } {
+  const lines: string[] = [];
+  const record = (level: string) => (msg: unknown, ...rest: unknown[]) =>
+    lines.push(`${level}: ${[msg, ...rest].join(' ')}`);
+  const log = {
+    debug: record('debug'),
+    info: record('info'),
+    warn: record('warn'),
+    error: record('error'),
+  } as unknown as Logging;
+  return { log, lines };
+}
+
+test('a token with no usable exp claim does not trigger a refresh on every request', async () => {
+  installFetchMock({
+    '/v3/thermostats/t-123': detailResponse({ at: 70, sys: 1 }),
+  });
+  // Regression: the fallback expiry used to equal the refresh margin, so the
+  // freshness check failed immediately and every request dragged a refresh.
+  cognitoMock.loginSessionExpSeconds = Number.NaN;
+  const provider = makeProvider();
+
+  await provider.readState();
+  await provider.readState();
+  await provider.readState();
+
+  assert.equal(cognitoMock.authenticateUserCalls, 1);
+  assert.equal(cognitoMock.refreshSessionCalls, 0, 'a missing exp must not cause a refresh storm');
+});
+
+test('discovery warns when the account holds more than one thermostat', async () => {
+  installFetchMock({
+    '/v3/thermostats': {
+      status: 200,
+      body: JSON.stringify({
+        statusCode: 200,
+        success: true,
+        things: [{ thingName: 't-aaa' }, { thingName: 't-bbb' }],
+      }),
+    },
+    '/v3/thermostats/t-aaa': detailResponse({ at: 70, sys: 1 }),
+  });
+  const { log, lines } = makeCapturingLog();
+  const provider = new AppCloudStateProvider(
+    { email: 'user@example.com', password: 'hunter2-secret', thingId: undefined },
+    log,
+    makeCognitoClient(),
+  );
+
+  await provider.readState();
+
+  const warning = lines.find((line) => line.startsWith('warn:'));
+  assert.ok(warning !== undefined, 'a multi-thermostat account must not silently pick one');
+  assert.ok(warning.includes('t-aaa') && warning.includes('t-bbb'), 'the warning should list the choices');
+  assert.ok(warning.includes('thingId'), 'the warning should name the setting that resolves it');
+});
+
+test('discovery rejects a malformed device list', async () => {
+  installFetchMock({
+    '/v3/thermostats': {
+      status: 200,
+      body: JSON.stringify({ statusCode: 200, success: true, things: { nope: true } }),
+    },
+  });
+  const provider = makeProvider({ thingId: undefined });
+
+  await assert.rejects(() => provider.readState(), StateProviderUnavailableError);
+});
+
+test('readState reports Off as the current state when sys=0', async () => {
+  installFetchMock({
+    '/v3/thermostats/t-123': detailResponse({ at: 70, hs: 68, cs: 74, sys: 0 }),
+  });
+  const provider = makeProvider();
+
+  const snapshot = await provider.readState();
+
+  // Regression: sys=0 produced null, leaving the Home app showing the last
+  // active mode for a thermostat that is switched off.
+  assert.equal(snapshot.currentHeatingCoolingState, 0);
+  assert.equal(snapshot.targetHeatingCoolingState, 0);
+});
+
+test('GET requests do not declare a JSON body they are not sending', async () => {
+  const fetchMock = installFetchMock({
+    '/v3/thermostats/t-123': detailResponse({ at: 70, sys: 1 }),
+  });
+  const provider = makeProvider();
+
+  await provider.readState();
+
+  const get = fetchMock.calls.find((call) => call.method === 'GET');
+  assert.ok(get !== undefined);
+  assert.equal(get.headers['Content-Type'], undefined);
+  assert.match(get.headers.jwt, /^eyJ[\w-]+\.[\w-]+\.[\w-]+$/);
 });

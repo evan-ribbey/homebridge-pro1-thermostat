@@ -11,6 +11,12 @@ import {
   ThermostatStateSnapshot,
 } from '../src/state/index.js';
 
+interface FakeProps {
+  minValue: number;
+  maxValue: number;
+  minStep: number;
+}
+
 class FakeCharacteristic {
   public readonly updatedValues: unknown[] = [];
 
@@ -24,6 +30,12 @@ class FakeCharacteristic {
     return this;
   }
 
+  setProps(props: FakeProps): this {
+    this.props = props;
+    return this;
+  }
+
+  public props: FakeProps | null = null;
   public onGetFn: (() => unknown) | null = null;
   public onSetFn: ((value: unknown) => unknown) | null = null;
 }
@@ -214,4 +226,205 @@ test('keeps last known state when a poll fails', async () => {
   assert.equal(await thermostat.getCurrentTemperature(), 22);
   await thermostat.startPolling();
   assert.equal(await thermostat.getCurrentTemperature(), 22);
+});
+
+/** A provider whose snapshot can be swapped between polls. */
+function mutableProvider(initial: Partial<ThermostatStateSnapshot>) {
+  const state = { snapshot: snapshot(initial), failures: 0, sets: [] as number[], modes: [] as number[] };
+  const provider: ThermostatStateProvider = {
+    readState: async () => {
+      if (state.failures > 0) {
+        state.failures -= 1;
+        throw new StateProviderUnavailableError('down');
+      }
+      return state.snapshot;
+    },
+    setTargetTemperature: async (value: number) => {
+      state.sets.push(value);
+    },
+    setTargetHeatingCoolingState: async (value: number) => {
+      state.modes.push(value);
+    },
+  };
+  return { provider, state };
+}
+
+test('a polled value does not snap back a target the user just set', async () => {
+  const { provider, state } = mutableProvider({ targetTemperatureCelsius: 21 });
+  const { accessory, thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  await thermostat.setTargetTemperature(24);
+  assert.deepEqual(state.sets, [24]);
+
+  // The first poll legitimately published 21; only pushes after the user's
+  // change matter here.
+  const pushed = accessory.getService('Thermostat')!.getCharacteristic('TargetTemperature').updatedValues;
+  const pushCountAtSet = pushed.length;
+
+  // The device has not applied the change yet and still reports 21.
+  await thermostat.startPolling();
+
+  assert.equal(await thermostat.getTargetTemperature(), 24, 'the commanded value must win');
+  assert.deepEqual(
+    pushed.slice(pushCountAtSet),
+    [],
+    'the stale device value must not be pushed back to HomeKit',
+  );
+});
+
+test('the commanded target is released once the device confirms it', async () => {
+  const { provider, state } = mutableProvider({ targetTemperatureCelsius: 21 });
+  const { thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  await thermostat.setTargetTemperature(24);
+
+  // Device applies the change.
+  state.snapshot = snapshot({ targetTemperatureCelsius: 24 });
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getTargetTemperature(), 24);
+
+  // A later change made at the thermostat itself must now come through.
+  state.snapshot = snapshot({ targetTemperatureCelsius: 19 });
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getTargetTemperature(), 19, 'a manual change at the wall must not be suppressed');
+});
+
+test('a manual change wins once the pending window lapses', async () => {
+  const { provider, state } = mutableProvider({ targetTemperatureCelsius: 21 });
+  const { thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  await thermostat.setTargetTemperature(24);
+
+  // The command was never applied; simulate the settle window elapsing.
+  const realNow = Date.now;
+  Date.now = () => realNow() + 130_000;
+  try {
+    state.snapshot = snapshot({ targetTemperatureCelsius: 19 });
+    await thermostat.startPolling();
+    assert.equal(await thermostat.getTargetTemperature(), 19, 'the plugin must stop overriding the device forever');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('a commanded mode is held until the device confirms it', async () => {
+  const { provider, state } = mutableProvider({ targetHeatingCoolingState: 1 });
+  const { thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  await thermostat.setTargetHeatingCoolingState(2);
+  assert.deepEqual(state.modes, [2]);
+
+  await thermostat.startPolling(); // device still reports heat
+  assert.equal(await thermostat.getTargetHeatingCoolingState(), 2);
+
+  state.snapshot = snapshot({ targetHeatingCoolingState: 2 });
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getTargetHeatingCoolingState(), 2);
+});
+
+test('reports No Response after three consecutive failed polls', async () => {
+  const { provider, state } = mutableProvider({ currentTemperatureCelsius: 22 });
+  const { thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getCurrentTemperature(), 22);
+
+  state.failures = 3;
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getCurrentTemperature(), 22, 'one blip still serves last-known state');
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getCurrentTemperature(), 22, 'two blips still serve last-known state');
+  await thermostat.startPolling();
+
+  await assert.rejects(() => thermostat.getCurrentTemperature());
+  await assert.rejects(() => thermostat.getCurrentHeatingCoolingState());
+  await assert.rejects(() => thermostat.getCurrentRelativeHumidity());
+});
+
+test('recovers from No Response once a poll succeeds again', async () => {
+  const { provider, state } = mutableProvider({ currentTemperatureCelsius: 22 });
+  const { thermostat } = makeAccessory(provider);
+
+  state.failures = 3;
+  await thermostat.startPolling();
+  await thermostat.startPolling();
+  await thermostat.startPolling();
+  await assert.rejects(() => thermostat.getCurrentTemperature());
+
+  await thermostat.startPolling(); // succeeds
+  assert.equal(await thermostat.getCurrentTemperature(), 22);
+});
+
+test('TemperatureDisplayUnits remembers the HomeKit preference', async () => {
+  const { thermostat } = makeAccessory(staticProvider());
+  assert.equal(await thermostat.getTemperatureDisplayUnits(), 1, 'defaults to Fahrenheit');
+  await thermostat.setTemperatureDisplayUnits(0);
+  assert.equal(await thermostat.getTemperatureDisplayUnits(), 0, 'the choice must not revert');
+});
+
+test('startPolling is idempotent and stopPolling clears the timer', async () => {
+  const { provider } = mutableProvider({ currentTemperatureCelsius: 22 });
+  const { thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  await thermostat.startPolling();
+  thermostat.stopPolling();
+  thermostat.stopPolling(); // safe to repeat
+});
+
+test('TargetTemperature advertises a range covering the Pro1 setpoint span', async () => {
+  const { accessory } = makeAccessory(staticProvider());
+  const props = accessory.getService('Thermostat')!.getCharacteristic('TargetTemperature').props;
+  assert.ok(props !== null, 'setProps must be called so HomeKit does not clamp low setpoints');
+  // 45 °F freeze-protection setpoints are 7.2 °C, below HomeKit's 10 °C default.
+  assert.ok(props.minValue <= 7.3, `minValue ${props.minValue} must reach a 45F setpoint`);
+  assert.ok(props.maxValue >= 32.3, `maxValue ${props.maxValue} must reach a 90F setpoint`);
+});
+
+test('an unchanged reading is not re-pushed to HomeKit on every poll', async () => {
+  const { provider } = mutableProvider({ currentTemperatureCelsius: 22, currentRelativeHumidityPercent: 40 });
+  const { accessory, thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  await thermostat.startPolling();
+  await thermostat.startPolling();
+
+  const service = accessory.getService('Thermostat')!;
+  // A thermostat is mostly idle; re-sending identical values every poll is
+  // pure HAP event noise for every subscribed controller.
+  assert.deepEqual(service.getCharacteristic('CurrentTemperature').updatedValues, [22]);
+  assert.deepEqual(service.getCharacteristic('CurrentRelativeHumidity').updatedValues, [40]);
+});
+
+test('a changed reading is still pushed', async () => {
+  const { provider, state } = mutableProvider({ currentTemperatureCelsius: 22 });
+  const { accessory, thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  state.snapshot = snapshot({ currentTemperatureCelsius: 23 });
+  await thermostat.startPolling();
+  state.snapshot = snapshot({ currentTemperatureCelsius: 23 });
+  await thermostat.startPolling();
+
+  assert.deepEqual(accessory.getService('Thermostat')!.getCharacteristic('CurrentTemperature').updatedValues, [22, 23]);
+});
+
+test('everything is re-published after recovering from No Response', async () => {
+  const { provider, state } = mutableProvider({ currentTemperatureCelsius: 22 });
+  const { accessory, thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  state.failures = 3;
+  await thermostat.startPolling();
+  await thermostat.startPolling();
+  await thermostat.startPolling();
+  await assert.rejects(() => thermostat.getCurrentTemperature());
+
+  // Same value as before the outage, but controllers may have dropped it.
+  await thermostat.startPolling();
+  assert.deepEqual(accessory.getService('Thermostat')!.getCharacteristic('CurrentTemperature').updatedValues, [22, 22]);
 });

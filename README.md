@@ -2,8 +2,9 @@
 
 <p align="center">
 
-<a href="https://github.com/<your-github-username>/homebridge-pro1-thermostat"><img alt="GitHub Actions" src="https://github.com/<your-github-username>/homebridge-pro1-thermostat/actions/workflows/build.yml/badge.svg"></a>
-<a href="https://www.npmjs.com/package/homebridge-pro1-thermostat"><img alt="npm version" src="https://badge.fury.io/js/homebridge-pro1-thermostat.svg"></a>
+<a href="https://www.npmjs.com/package/homebridge-pro1-thermostat"><img alt="npm version" src="https://img.shields.io/npm/v/homebridge-pro1-thermostat.svg"></a>
+<a href="https://www.npmjs.com/package/homebridge-pro1-thermostat"><img alt="npm downloads" src="https://img.shields.io/npm/dt/homebridge-pro1-thermostat.svg"></a>
+<a href="https://github.com/homebridge/homebridge/wiki/Verified-Plugins"><img alt="homebridge" src="https://img.shields.io/badge/homebridge-plugin-blue.svg"></a>
 
 </p>
 
@@ -11,22 +12,26 @@ Homebridge platform plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755)
 
 ## Installation
 
+Search for **Pro1 Thermostat** in the Homebridge UI plugin browser, or install
+from the command line:
+
 ```sh
 npm install -g homebridge-pro1-thermostat
 ```
 
-> This repository is currently private (Gitea `git.ribbey.net`) and not yet
-> published to npm. Until it is published, install it manually into your
-> Homebridge instance (see the Development section), or mirror the repo to
-> GitHub and publish with `npm publish`.
+Source lives on Gitea at `git.ribbey.net/evan/homebridge-pro1-thermostat`.
 
-> **Status: Milestone 3 complete — app-cloud REST control works.** The plugin has a
-> clean state-provider architecture, a local-API client, a polling loop, runtime config
+> **Status: app-cloud REST control works.** The plugin has a clean
+> state-provider architecture, a local-API client, a polling loop, runtime config
 > validation, a unit-test suite, and **two working control paths**: an **AWS IoT
 > poll-mode** provider (`provider: "cloud"`) that reads and controls the thermostat
 > using its own device certificate and the AWS IoT Classic Shadow, and an
 > **app-cloud REST** provider (`provider: "app"`) that authenticates with your PRO1
 > Connect account credentials against `https://api.pro1iaq.com`.
+>
+> If you want the plugin to stay out of the way of the thermostat's own
+> operation, prefer `provider: "app"` — see
+> [Living with the thermostat](#living-with-the-thermostat).
 
 ## What works today
 
@@ -62,9 +67,14 @@ npm install -g homebridge-pro1-thermostat
 - `src/state/localApiStateProvider.ts` — setters still throw
   `StateProviderNotImplementedError` (the local API genuinely can't command the
   thermostat); use `provider: "cloud"` or `provider: "app"` for control.
-- The `sys` mode mapping (0=off, 1=heat, 2=cool, 3=auto) is **provisional** —
-  verified against a real device for heat; off/cool/auto behavior should be
-  confirmed on your own unit.
+- The `sys` mode mapping is **partly provisional**. Heat and cool are verified
+  live and are *inverted* from the obvious reading — on this firmware `sys=1`
+  is cool and `sys=2` is heat. Off and auto should be confirmed on your own
+  unit. All three providers share one map (`src/state/modeMap.ts`), so a
+  correction only has to be made once.
+- In auto mode the active stage (heating vs. cooling) is *inferred* from the
+  ambient temperature and the two setpoints, because the device reports the
+  configured mode rather than the running stage.
 
 ## Configuration
 
@@ -91,11 +101,47 @@ npm install -g homebridge-pro1-thermostat
 |---|---|---|---|
 | `name` | string | — | Platform display name |
 | `thermostats[].name` | string | — | Accessory name shown in HomeKit |
-| `thermostats[].host` | string | — | Thermostat IP or hostname on the LAN |
-| `thermostats[].port` | number | `80` | Local API port |
+| `thermostats[].host` | string | — | Thermostat IP or hostname on the LAN. **Required for `local` and `cloud`**; not used by `app` |
+| `thermostats[].port` | number | `80` | Local API port (`local` / `cloud` only) |
 | `thermostats[].model` | string | `T705` | Model (T701 / T705 / T721 / T755) |
-| `thermostats[].pollingInterval` | number | `60` | State polling interval (seconds) |
+| `thermostats[].pollingInterval` | number | `60` (`120` for `cloud`) | State polling interval, seconds. Floored at 15s (`local`), 30s (`app`), 60s (`cloud`) |
 | `thermostats[].provider` | string | `local` | `app` = PRO1 Connect app-cloud REST (control); `cloud` = AWS IoT shadow (control); `local` = local API (read-only) |
+
+An entry that fails validation is logged and skipped; the rest of your
+thermostats still load. Two entries that resolve to the same accessory
+identity (the same `host`, say) are reported and the duplicate skipped.
+
+## Living with the thermostat
+
+The plugin is designed to stay out of the way of whoever is standing at the
+thermostat. Three behaviours matter:
+
+**Your change at the wall wins.** An AWS IoT shadow keeps a `desired` value
+until something explicitly clears it, and the service re-sends it as a delta
+whenever `desired` and `reported` disagree. A setpoint written by the plugin
+would otherwise sit there as a standing order — adjust the temperature at the
+wall afterwards and the device gets told to go back. After the device confirms
+a commanded value, the `cloud` provider clears that `desired` entry. An
+unconfirmed (still in-flight) command is never cleared, and when there is
+nothing to clear this costs no extra traffic.
+
+**HomeKit does not snap your change back.** A shadow write can take up to two
+minutes to appear in `reported`. Until it does, polling still returns the old
+value; pushing that to HomeKit made a change appear to be rejected. The plugin
+now holds a commanded target until the device confirms it, or for two minutes,
+whichever comes first — after which the device is believed again.
+
+**The `cloud` provider interrupts the thermostat; the `app` provider does
+not.** AWS IoT permits one connection per policy, and the `cloud` provider
+connects *as the thermostat*, so every poll briefly displaces the device's own
+cloud link. It defaults to a 120s interval and refuses to go below 60s for
+that reason. If the PRO1 Connect app showing the thermostat as intermittently
+offline bothers you, use `provider: "app"`, which connects as your account
+instead and has no such side effect.
+
+If the plugin cannot reach the thermostat for three consecutive polls, the
+accessory reports **No Response** in the Home app rather than continuing to
+present a stale reading as though it were live.
 
 ## Cloud control (poll mode)
 
@@ -116,8 +162,15 @@ Because AWS IoT enforces one connection per policy, connecting as the device
 briefly kicks the thermostat's own cloud link (the Pro1 app may show it offline
 for a second). The plugin therefore uses **poll mode**: connect, exchange one
 shadow message, disconnect immediately — a typical operation lasts 1–2 seconds,
-after which the device reconnects on its own. A longer `pollingInterval` (e.g.
-`120`) reduces how often this happens.
+after which the device reconnects on its own. `pollingInterval` defaults to
+`120` here and will not go below `60`; a longer interval reduces how often this
+happens. If you would rather not interrupt the device at all, use
+`provider: "app"`.
+
+After the device confirms a value this provider commanded, the corresponding
+`desired` entry is cleared from the shadow so it cannot later override a change
+made at the thermostat itself — see
+[Living with the thermostat](#living-with-the-thermostat).
 
 **Security note:** the local HTTP API exposes the device's AWS IoT private key
 without authentication — anyone on your LAN could take over cloud control of the
@@ -128,9 +181,10 @@ thermostat. Run this on a trusted network only.
 Set `provider: "app"` on a thermostat entry to control it through the PRO1
 Connect **app-cloud REST API** (`https://api.pro1iaq.com`) using your PRO1
 Connect account credentials. The plugin authenticates against the same AWS
-Cognito user pool the PRO1 Connect app uses (SRP login), caches the session in
-memory with transparent refresh, and reads/commands the thermostat's AWS IoT
-shadow over REST. Unlike the AWS IoT poll-mode path, it never connects as the
+Cognito user pool the PRO1 Connect app uses (SRP login, implemented natively
+against Node's `crypto` — no AWS SDK), caches the session in memory with
+transparent refresh, and reads/commands the thermostat's AWS IoT shadow over
+REST. Unlike the AWS IoT poll-mode path, it never connects as the
 device itself — no device-kick side effect, and it works from any network.
 
 ```json
@@ -154,30 +208,33 @@ device itself — no device-kick side effect, and it works from any network.
 }
 ```
 
+Note there is no `host`: the app-cloud provider reaches the thermostat through
+your PRO1 Connect account, so it does not need to be on the same network.
+
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `provider` | string | `local` | `app` = PRO1 Connect app-cloud REST API (control) |
 | `email` | string | — | PRO1 Connect account email (**required** when `provider: "app"`) |
 | `password` | string | — | PRO1 Connect account password (**required** when `provider: "app"`; `writeOnly` in the schema) |
-| `thingId` | string | `discover` | Thermostat ID (the IoT thing name) from the app-cloud API; leave blank to auto-discover the first device on the account |
+| `thingId` | string | `discover` | Thermostat ID (the IoT thing name) from the app-cloud API; leave blank to auto-discover. **Set this explicitly if the account has more than one thermostat** — auto-discovery picks the first and warns |
 
 **Credentials note:** `email` and `password` are stored in plaintext in
 `config.json` (standard Homebridge practice). The plugin sends them only to
-Cognito during login, never logs them (the email is truncated to its first two
-characters at most), and redacts them from error messages before logging or
-surfacing. The token cache is in-memory only — a plugin restart performs a fresh
-login.
+Cognito during login, never writes either to the log, and redacts both from
+error messages before logging or surfacing them — Cognito failures can echo the
+username back. The token cache is in-memory only — a plugin restart performs a
+fresh login.
 
 **What's verified:** real-device observation confirmed the API shapes —
 `GET /v3/thermostats?ownerId={sub}` returns `{statusCode, success, things: [...]}`
 (things top-level, `thingName` doubles as the REST thingId), `GET /v3/thermostats/{thingId}`
 returns `{statusCode, success, data: {shadow: {state: {reported, desired}}}}`,
 and `PUT /v3/shadow?thingId={thingId}&shadowNewValue={url-encoded JSON}` returns
-`{success: true}`. The `sys` mode mapping (0=off, 1=heat, 2=cool, 3=auto) is
-**provisional** — heat was verified against a real device; off/cool/auto should
-be confirmed on your own unit. Unit tests cover login caching, shadow parsing,
-mode-aware setpoints, sys writes, base64-wrapped responses, discovery, token
-refresh, and error sanitization.
+`{success: true}`. The `sys` mode mapping is `0`=off, `1`=**cool**, `2`=**heat**,
+`3`=auto — heat and cool were verified against a real device and are inverted
+from the naive reading; off and auto should be confirmed on your own unit. Unit
+tests cover login caching, shadow parsing, mode-aware setpoints, sys writes,
+base64-wrapped responses, discovery, token refresh, and error sanitization.
 
 ### Troubleshooting
 
@@ -187,6 +244,9 @@ refresh, and error sanitization.
 | HTTP 403 | Wrong `email`/`password` for the PRO1 Connect account |
 | `App cloud discovery failed: device list has no thingId` | No thermostats on the account, or the wrong one was picked — set `thingId` explicitly |
 | `setTargetTemperature failed: thermostat is off` | The API refuses setpoints while the unit is off — set a target mode first |
+| `account has N thermostats and no "thingId" is configured` | Auto-discovery can only pick one. Set `thingId` on each accessory, choosing from the names listed in the warning |
+| Accessory shows **No Response** | Three consecutive polls failed. Check credentials and connectivity; it clears itself on the next successful poll |
+| A change in the Home app appears to revert after a moment | Expected only if the command failed. A *pending* change is held for up to two minutes while the device catches up — if it reverts after that, the write is not reaching the device |
 
 ### Real-device smoke test (manual)
 
@@ -235,6 +295,16 @@ npm run lint      # eslint --max-warnings=0
 npm test          # compile-then-test (node --test on compiled JS)
 ```
 
+**Runtime dependencies: `mqtt` only.** Cognito SRP is implemented directly in
+`src/state/cognitoSrp.ts` over `node:crypto` and global `fetch`, rather than
+via `amazon-cognito-identity-js` — which is browser-oriented and pulled in an
+end-of-life `node-fetch@2` plus polyfills. That library is retained as a
+*devDependency test oracle*: `test/cognitoSrp.test.ts` differentially checks
+every derivation step (padHex, hex hashing, HKDF, modular exponentiation, the
+full session-key derivation, the timestamp format and the secret-block
+signature) against it, so the native implementation is verified byte-for-byte
+rather than merely believed.
+
 ## Roadmap
 
 - [x] State-provider abstraction (local API vs future cloud/AWS IoT)
@@ -243,6 +313,9 @@ npm test          # compile-then-test (node --test on compiled JS)
 - [x] Unit tests (HTTP client, platform discovery, accessory handlers)
 - [x] Reverse-engineered + implemented the AWS IoT path (`CloudStateProvider`, poll mode)
 - [x] App-cloud API path (clean concurrent identity — no device-kick side effect)
+- [x] Non-interference: clear satisfied shadow `desired`, hold pending HomeKit
+      writes, per-provider polling floors, "No Response" on repeated failure
+- [ ] Confirm the `sys` off/auto mapping against a real device
 - [ ] Optional: mDNS/scan discovery instead of manual host config
 
 ## License

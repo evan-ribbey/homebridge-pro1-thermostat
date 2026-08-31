@@ -46,10 +46,15 @@ export interface ThermostatStateSnapshot {
   /**
    * Current operating state.
    * Map to HomeKit Characteristic.CurrentHeatingCoolingState:
-   *   0 = Off, 1 = Heat, 2 = Cool, 3 = Auto
+   *   0 = Off, 1 = Heat, 2 = Cool
    * Or null if unavailable.
+   *
+   * Note there is deliberately no "auto" value here. HAP defines Auto only on
+   * the *Target* characteristic; the Current characteristic accepts Off, Heat
+   * or Cool alone, and HomeKit rejects a 3. A provider reading a device in
+   * auto mode must resolve it to the stage actually running.
    */
-  currentHeatingCoolingState: 0 | 1 | 2 | 3 | null;
+  currentHeatingCoolingState: 0 | 1 | 2 | null;
 
   /**
    * Target mode.

@@ -1,3 +1,18 @@
+# Runs on a self-hosted Gitea Runner (act_runner) on Linux.
+#
+# Gitea reads both .gitea/workflows/ and .github/workflows/, so this file works
+# on Gitea as-is and stays valid if the repo is ever mirrored to GitHub.
+#
+# Gitea-specific choices:
+#   - actions/* are pinned to @v4. Gitea proxies `uses:` to github.com, but the
+#     action still has to run on a JS runtime the runner provides. v5 of these
+#     actions requires node24, which only recent act_runner builds ship; v4
+#     runs on node20 and is supported by every current act_runner.
+#   - No `cache:` on setup-node. It needs the Actions cache service, which is
+#     optional in act_runner and fails the step outright when disabled.
+#   - No `concurrency:` block, which older Gitea versions reject at parse time.
+#   - timeout-minutes is set so a hung job cannot occupy the single self-hosted
+#     runner indefinitely.
 name: Build and Lint
 
 on: [push, pull_request]
@@ -5,33 +20,49 @@ on: [push, pull_request]
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20.x, 22.x, 24.x]
+        # Matches the `engines.node` range in package.json, which in turn
+        # tracks what Homebridge 2.x supports.
+        node-version: [22.x, 24.x, 26.x]
 
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out the repository
+        uses: actions/checkout@v4
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Lint the project
+      - name: Lint
         run: npm run lint
 
-      - name: Build the project
+      - name: Build
         run: npm run build
 
-      - name: List, audit, fix outdated dependencies and build again
+      - name: Test
+        run: npm test
+
+      - name: Verify the published package contents
+        # Catches a missing dist/ or the bundled AWS IoT root CA dropping out
+        # of the tarball, which would only otherwise surface after publishing.
         run: |
-          npm list --outdated
-          npm audit || true  # ignore failures
-          npm audit fix || true
-          npm list --outdated
-          npm run build
+          npm pack --dry-run
+          npm pack --dry-run --json > /tmp/pack.json
+          node -e "
+            const files = require('/tmp/pack.json')[0].files.map(f => f.path);
+            const required = ['dist/index.js', 'certs/aws-iot-classic-root.pem', 'config.schema.json'];
+            const missing = required.filter(f => !files.includes(f));
+            if (missing.length) {
+              console.error('Missing from package tarball: ' + missing.join(', '));
+              process.exit(1);
+            }
+            console.log('Package contains all required files (' + files.length + ' total).');
+          "

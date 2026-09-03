@@ -32,6 +32,12 @@ export class StateProviderUnavailableError extends Error {
 }
 
 /**
+ * Fan mode as the Pro1 app presents it: `on` runs the blower continuously,
+ * `auto` runs it only with a heat or cool call. There is no "off".
+ */
+export type FanMode = 'on' | 'auto';
+
+/**
  * A complete snapshot of thermostat state as understood by a provider.
  * Fields marked `null` mean "unknown/unavailable" — providers return
  * null for any datum they cannot obtain from their backing source.
@@ -66,6 +72,9 @@ export interface ThermostatStateSnapshot {
 
   /** Current relative humidity (percent, 0–100), or null if unavailable. */
   currentRelativeHumidityPercent: number | null;
+
+  /** Fan mode (`on` = continuous, `auto` = with calls), or null if unavailable. */
+  fanMode: FanMode | null;
 
   /** True if the provider could reach the thermostat on the last read. */
   isOnline: boolean;
@@ -114,4 +123,13 @@ export interface ThermostatStateProvider {
    * @throws {StateProviderNotImplementedError} if the provider cannot command modes.
    */
   setTargetHeatingCoolingState(targetHeatingCoolingState: 0 | 1 | 2 | 3): Promise<void>;
+
+  /**
+   * Set the fan mode.
+   *
+   * @param fanMode `on` for a continuously running fan, `auto` for fan-with-calls.
+   * @throws {StateProviderUnavailableError} if the backing system is unreachable.
+   * @throws {StateProviderNotImplementedError} if the provider cannot command the fan.
+   */
+  setFanMode(fanMode: FanMode): Promise<void>;
 }

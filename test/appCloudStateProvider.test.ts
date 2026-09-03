@@ -494,3 +494,29 @@ test('GET requests do not declare a JSON body they are not sending', async () =>
   assert.equal(get.headers['Content-Type'], undefined);
   assert.match(get.headers.jwt, /^eyJ[\w-]+\.[\w-]+\.[\w-]+$/);
 });
+
+test('readState maps the shadow fan field to a fan mode', async () => {
+  installFetchMock({
+    '/v3/thermostats/t-123': detailResponse({ at: 72, hs: 68, cs: 74, sys: 2, fan: 0 }),
+  });
+  const provider = makeProvider();
+
+  const snapshot = await provider.readState();
+
+  assert.equal(snapshot.fanMode, 'auto');
+});
+
+test('setFanMode writes the device fan field', async () => {
+  const fetchMock = installFetchMock({
+    '/v3/shadow': { status: 200, body: JSON.stringify({ success: true }) },
+  });
+  const provider = makeProvider();
+
+  await provider.setFanMode('on');
+  await provider.setFanMode('auto');
+
+  const puts = fetchMock.calls.filter((call) => call.method === 'PUT');
+  assert.equal(puts.length, 2);
+  const desired = puts.map((put) => JSON.parse(new URL(put.url).searchParams.get('shadowNewValue') ?? '{}') as Record<string, unknown>);
+  assert.deepEqual(desired, [{ fan: 1 }, { fan: 0 }]);
+});

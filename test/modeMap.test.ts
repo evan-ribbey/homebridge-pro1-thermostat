@@ -2,11 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  FAN_MODE_TO_VALUE,
   HOMEKIT_TO_SYS,
   SYS_TO_TARGET_MODE,
   celsiusToFahrenheit,
   deriveCurrentState,
   fahrenheitToCelsius,
+  fanValueToMode,
   numberOrNull,
   selectTargetSetpointF,
 } from '../src/state/modeMap.js';
@@ -81,4 +83,15 @@ test('numberOrNull rejects non-finite and non-numeric shadow values', () => {
   assert.equal(numberOrNull(Infinity), null);
   assert.equal(numberOrNull(undefined), null);
   assert.equal(numberOrNull(null), null);
+});
+
+test('fan values map to the two fan modes and round-trip', () => {
+  assert.equal(fanValueToMode(FAN_MODE_TO_VALUE.auto), 'auto');
+  assert.equal(fanValueToMode(FAN_MODE_TO_VALUE.on), 'on');
+  assert.notEqual(FAN_MODE_TO_VALUE.auto, FAN_MODE_TO_VALUE.on);
+});
+
+test('fan mode is unknown for an absent or unrecognised fan value', () => {
+  assert.equal(fanValueToMode(null), null);
+  assert.equal(fanValueToMode(42), null);
 });

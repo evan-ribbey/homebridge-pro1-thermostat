@@ -425,3 +425,60 @@ test('commanding a mode primes the cache for a following setpoint write', async 
   assert.equal(parsed.state.desired.hs, 71.6, 'heat mode writes the heat setpoint');
   assert.equal(parsed.state.desired.cs, undefined);
 });
+
+test('readState maps the shadow fan field to a fan mode', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  const factory = makeFactory(clients, {
+    state: { reported: { at: 72, hs: 68, cs: 74, sys: 2, fan: 1 } },
+  });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  const snapshot = await provider.readState();
+
+  assert.equal(snapshot.fanMode, 'on');
+});
+
+test('readState reports an unknown fan mode when the shadow has no fan field', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  const factory = makeFactory(clients, { state: { reported: { at: 72, hs: 68, cs: 74, sys: 2 } } });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  const snapshot = await provider.readState();
+
+  assert.equal(snapshot.fanMode, null);
+});
+
+test('setFanMode writes the device fan field for on and auto', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  const factory = makeFactory(clients, { state: {} });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  await provider.setFanMode('on');
+  await provider.setFanMode('auto');
+
+  assert.equal(clients.length, 2, 'one shadow/update per command, no read first');
+  const payloads = clients.map((client) => {
+    assert.ok(client.published[0].topic.endsWith('/shadow/update'));
+    return (JSON.parse(client.published[0].payload) as { state: { desired: { fan: number } } }).state.desired;
+  });
+  assert.equal(payloads[0].fan, 1);
+  assert.equal(payloads[1].fan, 0);
+});
+
+test('readState clears a satisfied desired fan entry like any other commanded key', async () => {
+  installGoodFetchMock();
+  const clients: FakeMqttClient[] = [];
+  const factory = makeFactory(clients, {
+    state: { reported: { at: 70, hs: 68, cs: 74, sys: 2, fan: 1 }, desired: { fan: 1 } },
+  });
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  await provider.readState();
+
+  assert.equal(clients.length, 2, 'a standing desired.fan would undo a fan change made at the wall');
+  const parsed = JSON.parse(clients[1].published[0].payload) as { state: { desired: Record<string, unknown> } };
+  assert.deepEqual(parsed.state.desired, { fan: null });
+});

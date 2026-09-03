@@ -1,5 +1,6 @@
 import { Pro1Client } from '../pro1Client.js';
 import {
+  FanMode,
   ThermostatStateProvider,
   ThermostatStateSnapshot,
   StateProviderUnavailableError,
@@ -40,6 +41,7 @@ export class LocalApiStateProvider implements ThermostatStateProvider {
         currentHeatingCoolingState: null,
         targetHeatingCoolingState: null,
         currentRelativeHumidityPercent: null,
+        fanMode: null,
         isOnline: true,
         readTimestampMs: Date.now(),
       };
@@ -69,6 +71,16 @@ export class LocalApiStateProvider implements ThermostatStateProvider {
     void _targetHeatingCoolingState;
     throw new StateProviderNotImplementedError(
       'Local API does not support setting target heating/cooling state (AWS IoT path not yet implemented)',
+    );
+  }
+
+  /**
+   * The local API cannot command the fan.
+   */
+  public async setFanMode(_fanMode: FanMode): Promise<void> {
+    void _fanMode;
+    throw new StateProviderNotImplementedError(
+      'Local API does not support setting the fan mode (AWS IoT path not yet implemented)',
     );
   }
 }

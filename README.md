@@ -37,6 +37,11 @@ Source lives on Gitea at `git.ribbey.net/evan/homebridge-pro1-thermostat`.
 
 - **Homebridge platform** that registers one HomeKit **Thermostat** accessory per
   thermostat configured in `config.json` (add / remove / restore-from-cache handled).
+- **Fan mode** as a **Fan** (Fan v2) service on the same accessory. Turning the
+  fan *on* in the Home app is the Pro1 app's "On" (blower runs continuously);
+  turning it *off* is "Auto" (blower runs only with a heat or cool call). The
+  thermostat has no fan-off setting, so the tile reads "off" while in auto.
+  Available with the `cloud` and `app` providers; the local API cannot see it.
 - **`ThermostatStateProvider` abstraction** (`src/state/`) that cleanly separates
   "what the local API can tell us" from "what the AWS IoT path will eventually
   provide" — with typed error contracts (`StateProviderUnavailableError`,
@@ -121,7 +126,8 @@ until something explicitly clears it, and the service re-sends it as a delta
 whenever `desired` and `reported` disagree. A setpoint written by the plugin
 would otherwise sit there as a standing order — adjust the temperature at the
 wall afterwards and the device gets told to go back. After the device confirms
-a commanded value, the `cloud` provider clears that `desired` entry. An
+a commanded value (setpoint, mode or fan), the `cloud` provider clears that
+`desired` entry. An
 unconfirmed (still in-flight) command is never cleared, and when there is
 nothing to clear this costs no extra traffic.
 
@@ -316,6 +322,8 @@ rather than merely believed.
 - [x] Non-interference: clear satisfied shadow `desired`, hold pending HomeKit
       writes, per-provider polling floors, "No Response" on repeated failure
 - [ ] Confirm the `sys` off/auto mapping against a real device
+- [ ] Confirm the `fan` on/auto encoding against a real device (assumed 0=auto,
+      1=on in `src/state/modeMap.ts`; the polarity has not been observed live)
 - [ ] Optional: mDNS/scan discovery instead of manual host config
 
 ## License

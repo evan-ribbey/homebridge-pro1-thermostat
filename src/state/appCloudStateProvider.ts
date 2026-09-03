@@ -31,13 +31,16 @@ import {
 import {
   HOMEKIT_TO_SYS,
   SYS_TO_TARGET_MODE,
+  FAN_MODE_TO_VALUE,
   celsiusToFahrenheit,
   deriveCurrentState,
   fahrenheitToCelsius,
+  fanValueToMode,
   numberOrNull,
   selectTargetSetpointF,
 } from './modeMap.js';
 import {
+  FanMode,
   StateProviderUnavailableError,
   ThermostatStateProvider,
   ThermostatStateSnapshot,
@@ -74,7 +77,7 @@ interface ShadowState {
   hs?: number; // heat setpoint (F)
   cs?: number; // cool setpoint (F)
   sys?: number; // 0=off 1=heat 2=cool 3=auto
-  fan?: number; // fan mode
+  fan?: number; // fan mode (see FAN_MODE_TO_VALUE)
   hum?: number; // humidity
 }
 
@@ -189,6 +192,17 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
   public async setTargetHeatingCoolingState(targetHeatingCoolingState: 0 | 1 | 2 | 3): Promise<void> {
     const thingId = await this.resolveThingId();
     await this.writeShadow(thingId, { sys: HOMEKIT_TO_SYS[targetHeatingCoolingState] });
+  }
+
+  /**
+   * Set the fan mode via the device `fan` field. See FAN_MODE_TO_VALUE for
+   * the (unverified) encoding.
+   *
+   * @throws {StateProviderUnavailableError} when the shadow write fails.
+   */
+  public async setFanMode(fanMode: FanMode): Promise<void> {
+    const thingId = await this.resolveThingId();
+    await this.writeShadow(thingId, { fan: FAN_MODE_TO_VALUE[fanMode] });
   }
 
   /**
@@ -488,6 +502,7 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
     const cs = numberOrNull(state.cs);
     const sys = numberOrNull(state.sys);
     const hum = numberOrNull(state.hum);
+    const fan = numberOrNull(state.fan);
 
     const mode = sys === null ? null : (SYS_TO_TARGET_MODE[sys] ?? null);
     const targetFahrenheit = selectTargetSetpointF(mode, at, hs, cs);
@@ -498,6 +513,7 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
       currentHeatingCoolingState: deriveCurrentState(sys, at, hs, cs),
       targetHeatingCoolingState: mode,
       currentRelativeHumidityPercent: hum,
+      fanMode: fanValueToMode(fan),
       isOnline: true,
       readTimestampMs,
     };

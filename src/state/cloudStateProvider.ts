@@ -6,13 +6,16 @@ import mqtt from 'mqtt';
 import {
   HOMEKIT_TO_SYS,
   SYS_TO_TARGET_MODE,
+  FAN_MODE_TO_VALUE,
   celsiusToFahrenheit,
   deriveCurrentState,
   fahrenheitToCelsius,
+  fanValueToMode,
   numberOrNull,
   selectTargetSetpointF,
 } from './modeMap.js';
 import {
+  FanMode,
   ThermostatStateProvider,
   ThermostatStateSnapshot,
   StateProviderUnavailableError,
@@ -99,7 +102,7 @@ const MQTT_TIMEOUT_MS = 5000;
 const MODE_CACHE_TTL_MS = 45_000;
 
 /** Shadow keys this provider commands, and therefore may need to clear. */
-const MANAGED_DESIRED_KEYS = ['hs', 'cs', 'sys'] as const;
+const MANAGED_DESIRED_KEYS = ['hs', 'cs', 'sys', 'fan'] as const;
 
 /** Narrow an unknown shadow branch to a plain object, or null. */
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -183,6 +186,16 @@ export class CloudStateProvider implements ThermostatStateProvider {
     await this.shadowUpdate({ desired: { sys: HOMEKIT_TO_SYS[targetHeatingCoolingState] } });
     // The commanded mode is now the one a following setpoint write should use.
     this.lastKnownMode = { mode: targetHeatingCoolingState, readAtMs: Date.now() };
+  }
+
+  /**
+   * Set the fan mode via the device `fan` field. See FAN_MODE_TO_VALUE for
+   * the (unverified) encoding.
+   *
+   * @throws {StateProviderUnavailableError} when the shadow/update exchange fails.
+   */
+  public async setFanMode(fanMode: FanMode): Promise<void> {
+    await this.shadowUpdate({ desired: { fan: FAN_MODE_TO_VALUE[fanMode] } });
   }
 
   /**
@@ -513,6 +526,7 @@ export class CloudStateProvider implements ThermostatStateProvider {
     const cs = numberOrNull(state.cs);
     const sys = numberOrNull(state.sys);
     const hum = numberOrNull(state.hum);
+    const fan = numberOrNull(state.fan);
 
     const mode = sys === null ? null : (SYS_TO_TARGET_MODE[sys] ?? null);
     const targetFahrenheit = selectTargetSetpointF(mode, at, hs, cs);
@@ -523,6 +537,7 @@ export class CloudStateProvider implements ThermostatStateProvider {
       currentHeatingCoolingState: deriveCurrentState(sys, at, hs, cs),
       targetHeatingCoolingState: mode,
       currentRelativeHumidityPercent: hum,
+      fanMode: fanValueToMode(fan),
       isOnline: true,
       readTimestampMs,
     };

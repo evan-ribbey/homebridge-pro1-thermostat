@@ -2,6 +2,7 @@ import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge
 
 import type { Pro1ThermostatDeviceConfig, Pro1ThermostatPlatform } from './platform.js';
 import {
+  FanMode,
   StateProviderNotImplementedError,
   StateProviderUnavailableError,
   ThermostatStateProvider,
@@ -12,6 +13,17 @@ import {
 const DEFAULT_TEMPERATURE = 20;
 const DEFAULT_HEATING_COOLING_STATE = 0; // Off
 const DEFAULT_RELATIVE_HUMIDITY = 50;
+const DEFAULT_FAN_ACTIVE = 0; // Auto
+
+/**
+ * The Fan v2 `Active` characteristic carries the Pro1 fan mode: 1 (active)
+ * is the app's "On" — the blower runs continuously — and 0 (inactive) is
+ * "Auto", where it runs only with a heat or cool call. The thermostat has no
+ * fan-off setting, so "off" in the Home app means auto, and the tile reads
+ * as "on" only while the fan is forced on.
+ */
+const FAN_ACTIVE_TO_MODE: Readonly<Record<0 | 1, FanMode>> = { 0: 'auto', 1: 'on' };
+const FAN_MODE_TO_ACTIVE: Readonly<Record<FanMode, 0 | 1>> = { auto: 0, on: 1 };
 
 /**
  * TargetTemperature bounds, in Celsius. HomeKit defaults to 10–38 °C, but Pro1
@@ -56,9 +68,13 @@ interface PendingWrite {
   expiresAtMs: number;
 }
 
+/** Characteristics a user can command, and which therefore may be pending. */
+type CommandedCharacteristic = 'TargetTemperature' | 'TargetHeatingCoolingState' | 'FanActive';
+
 /**
  * Platform Accessory
- * Exposes a Pro1 thermostat as a HomeKit Thermostat service.
+ * Exposes a Pro1 thermostat as a HomeKit Thermostat service plus a Fan v2
+ * service for the fan mode (see FAN_ACTIVE_TO_MODE).
  *
  * All state is read from the injected ThermostatStateProvider on a polling
  * loop (config.pollingInterval seconds) and pushed to HomeKit via
@@ -67,6 +83,7 @@ interface PendingWrite {
  */
 export class Pro1ThermostatAccessory {
   private readonly service: Service;
+  private readonly fanService: Service;
   private readonly stateProvider: ThermostatStateProvider;
   private lastSnapshot: ThermostatStateSnapshot | null = null;
   private pollingTimer: NodeJS.Timeout | null = null;
@@ -74,8 +91,7 @@ export class Pro1ThermostatAccessory {
   private consecutiveFailures = 0;
   /** Last value pushed per characteristic, to suppress redundant updates. */
   private readonly lastPushedValues = new Map<string, number>();
-  private pendingTargetTemperature: PendingWrite | null = null;
-  private pendingTargetMode: PendingWrite | null = null;
+  private readonly pendingWrites = new Map<CommandedCharacteristic, PendingWrite>();
   /** Display unit preference; HomeKit owns this, the device is unaffected. */
   private temperatureDisplayUnits: CharacteristicValue = 1; // 1 = Fahrenheit
 
@@ -128,6 +144,14 @@ export class Pro1ThermostatAccessory {
 
     this.service.getCharacteristic(this.platform.Characteristic.CurrentRelativeHumidity)
       .onGet(this.getCurrentRelativeHumidity.bind(this));
+
+    // Fan mode lives on a Fan v2 service; the Thermostat service has no fan characteristic.
+    this.fanService = this.accessory.getService(this.platform.Service.Fanv2)
+      || this.accessory.addService(this.platform.Service.Fanv2);
+    this.fanService.setCharacteristic(this.platform.Characteristic.Name, `${this.device.name} Fan`);
+    this.fanService.getCharacteristic(this.platform.Characteristic.Active)
+      .onGet(this.getFanActive.bind(this))
+      .onSet(this.setFanActive.bind(this));
   }
 
   /**
@@ -214,6 +238,12 @@ export class Pro1ThermostatAccessory {
       && !this.isSupersededByPendingWrite('TargetHeatingCoolingState', snapshot.targetHeatingCoolingState)) {
       this.pushIfChanged('TargetHeatingCoolingState', this.platform.Characteristic.TargetHeatingCoolingState, snapshot.targetHeatingCoolingState);
     }
+    if (snapshot.fanMode !== null) {
+      const active = FAN_MODE_TO_ACTIVE[snapshot.fanMode];
+      if (!this.isSupersededByPendingWrite('FanActive', active)) {
+        this.pushIfChanged('FanActive', this.platform.Characteristic.Active, active, this.fanService);
+      }
+    }
   }
 
   /**
@@ -225,12 +255,17 @@ export class Pro1ThermostatAccessory {
    * new information. Null (unknown) is never pushed and never remembered, so
    * a value reappearing after a gap is always sent.
    */
-  private pushIfChanged(key: string, characteristic: Parameters<Service['updateCharacteristic']>[0], value: number | null): void {
+  private pushIfChanged(
+    key: string,
+    characteristic: Parameters<Service['updateCharacteristic']>[0],
+    value: number | null,
+    service: Service = this.service,
+  ): void {
     if (value === null || this.lastPushedValues.get(key) === value) {
       return;
     }
     this.lastPushedValues.set(key, value);
-    this.service.updateCharacteristic(characteristic, value);
+    service.updateCharacteristic(characteristic, value);
   }
 
   /**
@@ -241,7 +276,7 @@ export class Pro1ThermostatAccessory {
    * @returns true when the polled value must not be pushed to HomeKit.
    */
   private isSupersededByPendingWrite(
-    characteristic: 'TargetTemperature' | 'TargetHeatingCoolingState',
+    characteristic: CommandedCharacteristic,
     polledValue: number,
   ): boolean {
     const pending = this.readPendingWrite(characteristic);
@@ -261,11 +296,9 @@ export class Pro1ThermostatAccessory {
   }
 
   /** Read a pending write, expiring it if the window has elapsed. */
-  private readPendingWrite(
-    characteristic: 'TargetTemperature' | 'TargetHeatingCoolingState',
-  ): PendingWrite | null {
-    const pending = characteristic === 'TargetTemperature' ? this.pendingTargetTemperature : this.pendingTargetMode;
-    if (pending === null) {
+  private readPendingWrite(characteristic: CommandedCharacteristic): PendingWrite | null {
+    const pending = this.pendingWrites.get(characteristic);
+    if (pending === undefined) {
       return null;
     }
     if (Date.now() >= pending.expiresAtMs) {
@@ -279,14 +312,11 @@ export class Pro1ThermostatAccessory {
     return pending;
   }
 
-  private setPendingWrite(
-    characteristic: 'TargetTemperature' | 'TargetHeatingCoolingState',
-    pending: PendingWrite | null,
-  ): void {
-    if (characteristic === 'TargetTemperature') {
-      this.pendingTargetTemperature = pending;
+  private setPendingWrite(characteristic: CommandedCharacteristic, pending: PendingWrite | null): void {
+    if (pending === null) {
+      this.pendingWrites.delete(characteristic);
     } else {
-      this.pendingTargetMode = pending;
+      this.pendingWrites.set(characteristic, pending);
     }
   }
 
@@ -395,5 +425,33 @@ export class Pro1ThermostatAccessory {
       throw this.communicationFailure();
     }
     return this.lastSnapshot?.currentRelativeHumidityPercent ?? DEFAULT_RELATIVE_HUMIDITY;
+  }
+
+  /** Fan v2 Active: 1 while the fan is forced on, 0 in auto (see FAN_ACTIVE_TO_MODE). */
+  async getFanActive(): Promise<CharacteristicValue> {
+    if (this.isUnreachable()) {
+      throw this.communicationFailure();
+    }
+    const pending = this.readPendingWrite('FanActive')?.value;
+    if (pending !== undefined) {
+      return pending;
+    }
+    const fanMode = this.lastSnapshot?.fanMode ?? null;
+    return fanMode === null ? DEFAULT_FAN_ACTIVE : FAN_MODE_TO_ACTIVE[fanMode];
+  }
+
+  /** Fan v2 Active set from the Home app: on forces the fan, off returns it to auto. */
+  async setFanActive(value: CharacteristicValue) {
+    const active: 0 | 1 = value === 1 || value === true ? 1 : 0;
+    try {
+      await this.stateProvider.setFanMode(FAN_ACTIVE_TO_MODE[active]);
+    } catch (error) {
+      if (error instanceof StateProviderNotImplementedError) {
+        this.platform.log.debug(`[${this.device.name}] setFanMode not supported by provider: ${error.message}`);
+        return; // Do not crash; HomeKit keeps the previous value.
+      }
+      throw error;
+    }
+    this.setPendingWrite('FanActive', { value: active, expiresAtMs: Date.now() + PENDING_WRITE_TTL_MS });
   }
 }

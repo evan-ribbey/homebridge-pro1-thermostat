@@ -10,6 +10,33 @@
  * a T855iSHv2: sys=1 is COOL and sys=2 is HEAT.
  */
 
+import type { FanMode } from './stateProvider.js';
+
+/**
+ * Fan mode → device `fan` value.
+ *
+ * UNVERIFIED on hardware: the shadow carries a numeric `fan` field but no
+ * captured payload documents its encoding. 0=auto / 1=on is the common
+ * convention; given the `sys` surprise above, confirm it by toggling the fan
+ * in the Pro1 app and reading the shadow. If it turns out inverted, this is
+ * the only place to flip it.
+ */
+export const FAN_MODE_TO_VALUE: Readonly<Record<FanMode, number>> = {
+  auto: 0,
+  on: 1,
+};
+
+/** Device `fan` value → fan mode, or null when absent or unrecognised. */
+export function fanValueToMode(value: number | null): FanMode | null {
+  if (value === FAN_MODE_TO_VALUE.auto) {
+    return 'auto';
+  }
+  if (value === FAN_MODE_TO_VALUE.on) {
+    return 'on';
+  }
+  return null;
+}
+
 /** Device `sys` → HomeKit TargetHeatingCoolingState (0=Off 1=Heat 2=Cool 3=Auto). */
 export const SYS_TO_TARGET_MODE: Readonly<Record<number, 0 | 1 | 2 | 3 | null>> = {
   0: 0, // OFF

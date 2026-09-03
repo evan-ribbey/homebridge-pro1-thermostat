@@ -5,6 +5,7 @@ import { Pro1ThermostatAccessory } from '../src/platformAccessory.js';
 import type { Pro1ThermostatPlatform } from '../src/platform.js';
 import type { PlatformAccessory } from 'homebridge';
 import {
+  FanMode,
   StateProviderNotImplementedError,
   StateProviderUnavailableError,
   ThermostatStateProvider,
@@ -89,7 +90,7 @@ const DEVICE = { name: 'Living Room', host: '192.0.2.1', pollingInterval: 60 };
 
 function makePlatform(): Pro1ThermostatPlatform {
   const log = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
-  const Service = { AccessoryInformation: 'AccessoryInformation', Thermostat: 'Thermostat' };
+  const Service = { AccessoryInformation: 'AccessoryInformation', Thermostat: 'Thermostat', Fanv2: 'Fanv2' };
   const Characteristic = {
     Manufacturer: 'Manufacturer',
     Model: 'Model',
@@ -101,6 +102,7 @@ function makePlatform(): Pro1ThermostatPlatform {
     TargetTemperature: 'TargetTemperature',
     TemperatureDisplayUnits: 'TemperatureDisplayUnits',
     CurrentRelativeHumidity: 'CurrentRelativeHumidity',
+    Active: 'Active',
   };
   return { log, Service, Characteristic } as unknown as Pro1ThermostatPlatform;
 }
@@ -119,6 +121,7 @@ function snapshot(overrides: Partial<ThermostatStateSnapshot> = {}): ThermostatS
     currentHeatingCoolingState: null,
     targetHeatingCoolingState: null,
     currentRelativeHumidityPercent: null,
+    fanMode: null,
     isOnline: true,
     readTimestampMs: Date.now(),
     ...overrides,
@@ -130,6 +133,7 @@ function staticProvider(): ThermostatStateProvider {
     readState: async () => snapshot(),
     setTargetTemperature: async () => {},
     setTargetHeatingCoolingState: async () => {},
+    setFanMode: async () => {},
   };
 }
 
@@ -153,6 +157,7 @@ test('serves polled snapshot values and pushes them via updateCharacteristic', a
     }),
     setTargetTemperature: async () => {},
     setTargetHeatingCoolingState: async () => {},
+    setFanMode: async () => {},
   };
   const { accessory, thermostat } = makeAccessory(provider);
   await thermostat.startPolling();
@@ -178,6 +183,7 @@ test('setTargetTemperature delegates to the provider', async () => {
       received = value;
     },
     setTargetHeatingCoolingState: async () => {},
+    setFanMode: async () => {},
   };
   const { thermostat } = makeAccessory(provider);
   await thermostat.setTargetTemperature(24);
@@ -191,6 +197,7 @@ test('setTargetTemperature swallows StateProviderNotImplementedError', async () 
       throw new StateProviderNotImplementedError('not supported');
     },
     setTargetHeatingCoolingState: async () => {},
+    setFanMode: async () => {},
   };
   const { thermostat } = makeAccessory(provider);
   await assert.doesNotReject(() => thermostat.setTargetTemperature(24));
@@ -203,6 +210,7 @@ test('setTargetHeatingCoolingState swallows StateProviderNotImplementedError', a
     setTargetHeatingCoolingState: async () => {
       throw new StateProviderNotImplementedError('not supported');
     },
+    setFanMode: async () => {},
   };
   const { thermostat } = makeAccessory(provider);
   await assert.doesNotReject(() => thermostat.setTargetHeatingCoolingState(1));
@@ -220,6 +228,7 @@ test('keeps last known state when a poll fails', async () => {
     },
     setTargetTemperature: async () => {},
     setTargetHeatingCoolingState: async () => {},
+    setFanMode: async () => {},
   };
   const { thermostat } = makeAccessory(provider);
   await thermostat.startPolling();
@@ -230,7 +239,7 @@ test('keeps last known state when a poll fails', async () => {
 
 /** A provider whose snapshot can be swapped between polls. */
 function mutableProvider(initial: Partial<ThermostatStateSnapshot>) {
-  const state = { snapshot: snapshot(initial), failures: 0, sets: [] as number[], modes: [] as number[] };
+  const state = { snapshot: snapshot(initial), failures: 0, sets: [] as number[], modes: [] as number[], fans: [] as FanMode[] };
   const provider: ThermostatStateProvider = {
     readState: async () => {
       if (state.failures > 0) {
@@ -244,6 +253,9 @@ function mutableProvider(initial: Partial<ThermostatStateSnapshot>) {
     },
     setTargetHeatingCoolingState: async (value: number) => {
       state.modes.push(value);
+    },
+    setFanMode: async (value: FanMode) => {
+      state.fans.push(value);
     },
   };
   return { provider, state };
@@ -427,4 +439,99 @@ test('everything is re-published after recovering from No Response', async () =>
   // Same value as before the outage, but controllers may have dropped it.
   await thermostat.startPolling();
   assert.deepEqual(accessory.getService('Thermostat')!.getCharacteristic('CurrentTemperature').updatedValues, [22, 22]);
+});
+
+// ---------------------------------------------------------------------------
+// Fan v2 service: Active = 1 means the fan runs continuously ("On" in the
+// Pro1 app), Active = 0 means the fan only runs with a heat/cool call ("Auto").
+// ---------------------------------------------------------------------------
+
+test('exposes a Fan v2 service whose Active characteristic defaults to auto before the first poll', async () => {
+  const { accessory, thermostat } = makeAccessory(staticProvider());
+  const fan = accessory.getService('Fanv2');
+  assert.ok(fan, 'a Fan v2 service must be added to the accessory');
+  assert.ok(fan.getCharacteristic('Active').onGetFn, 'Active must have a GET handler');
+  assert.ok(fan.getCharacteristic('Active').onSetFn, 'Active must have a SET handler');
+  assert.equal(await thermostat.getFanActive(), 0);
+});
+
+test('a polled fan mode is served and pushed to the Fan v2 service', async () => {
+  const { provider, state } = mutableProvider({ fanMode: 'on' });
+  const { accessory, thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getFanActive(), 1);
+  const active = accessory.getService('Fanv2')!.getCharacteristic('Active');
+  assert.deepEqual(active.updatedValues, [1]);
+
+  state.snapshot = snapshot({ fanMode: 'auto' });
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getFanActive(), 0);
+  assert.deepEqual(active.updatedValues, [1, 0]);
+});
+
+test('an unknown fan mode is never pushed', async () => {
+  const { provider } = mutableProvider({ fanMode: null });
+  const { accessory, thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+
+  assert.deepEqual(accessory.getService('Fanv2')!.getCharacteristic('Active').updatedValues, []);
+});
+
+test('setting Active commands the fan on or auto through the provider', async () => {
+  const { provider, state } = mutableProvider({});
+  const { thermostat } = makeAccessory(provider);
+
+  await thermostat.setFanActive(1);
+  await thermostat.setFanActive(0);
+
+  assert.deepEqual(state.fans, ['on', 'auto']);
+});
+
+test('setFanActive swallows StateProviderNotImplementedError', async () => {
+  const provider: ThermostatStateProvider = {
+    ...staticProvider(),
+    setFanMode: async () => {
+      throw new StateProviderNotImplementedError('not supported');
+    },
+  };
+  const { thermostat } = makeAccessory(provider);
+  await assert.doesNotReject(() => thermostat.setFanActive(1));
+});
+
+test('a commanded fan mode is held until the device confirms it', async () => {
+  const { provider, state } = mutableProvider({ fanMode: 'auto' });
+  const { accessory, thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  await thermostat.setFanActive(1);
+  const active = accessory.getService('Fanv2')!.getCharacteristic('Active');
+  const pushCountAtSet = active.updatedValues.length;
+
+  await thermostat.startPolling(); // device still reports auto
+  assert.equal(await thermostat.getFanActive(), 1, 'the commanded value must win');
+  assert.deepEqual(active.updatedValues.slice(pushCountAtSet), [], 'the stale device value must not snap the fan back');
+
+  state.snapshot = snapshot({ fanMode: 'on' });
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getFanActive(), 1);
+
+  // A later change made at the thermostat itself must now come through.
+  state.snapshot = snapshot({ fanMode: 'auto' });
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getFanActive(), 0, 'a manual fan change at the wall must not be suppressed');
+});
+
+test('the fan reports No Response alongside the thermostat', async () => {
+  const { provider, state } = mutableProvider({ fanMode: 'on' });
+  const { thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  state.failures = 3;
+  await thermostat.startPolling();
+  await thermostat.startPolling();
+  await thermostat.startPolling();
+
+  await assert.rejects(() => thermostat.getFanActive());
 });

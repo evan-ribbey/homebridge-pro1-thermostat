@@ -436,7 +436,7 @@ test('readState maps the shadow fan field to a fan mode', async () => {
 
   const snapshot = await provider.readState();
 
-  assert.equal(snapshot.fanMode, 'on');
+  assert.equal(snapshot.fanMode, 'auto', 'fan=1 is AUTO (verified live)');
 });
 
 test('readState reports an unknown fan mode when the shadow has no fan field', async () => {
@@ -464,8 +464,9 @@ test('setFanMode writes the device fan field for on and auto', async () => {
     assert.ok(client.published[0].topic.endsWith('/shadow/update'));
     return (JSON.parse(client.published[0].payload) as { state: { desired: { fan: number } } }).state.desired;
   });
-  assert.equal(payloads[0].fan, 1);
-  assert.equal(payloads[1].fan, 0);
+  // Fan mode -> device fan: on->0, auto->1 (verified live; inverted polarity)
+  assert.equal(payloads[0].fan, 0);
+  assert.equal(payloads[1].fan, 1);
 });
 
 test('readState clears a satisfied desired fan entry like any other commanded key', async () => {

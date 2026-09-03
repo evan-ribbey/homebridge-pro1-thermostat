@@ -15,15 +15,14 @@ import type { FanMode } from './stateProvider.js';
 /**
  * Fan mode → device `fan` value.
  *
- * UNVERIFIED on hardware: the shadow carries a numeric `fan` field but no
- * captured payload documents its encoding. 0=auto / 1=on is the common
- * convention; given the `sys` surprise above, confirm it by toggling the fan
- * in the Pro1 app and reading the shadow. If it turns out inverted, this is
- * the only place to flip it.
+ * Like `sys`, the polarity is INVERTED relative to the naive reading.
+ * Verified live 2026-09-03: fan=0 runs the blower continuously (the app's
+ * "On") and fan=1 is "Auto". The 0.2.0 release shipped the naive guess and
+ * had the Home app's fan switch backwards.
  */
 export const FAN_MODE_TO_VALUE: Readonly<Record<FanMode, number>> = {
-  auto: 0,
-  on: 1,
+  on: 0, // continuous (verified live)
+  auto: 1, // with heat/cool calls (verified live)
 };
 
 /** Device `fan` value → fan mode, or null when absent or unrecognised. */

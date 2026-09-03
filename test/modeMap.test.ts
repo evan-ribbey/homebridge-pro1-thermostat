@@ -91,6 +91,15 @@ test('fan values map to the two fan modes and round-trip', () => {
   assert.notEqual(FAN_MODE_TO_VALUE.auto, FAN_MODE_TO_VALUE.on);
 });
 
+test('fan polarity stays inverted: 0 is on (continuous) and 1 is auto', () => {
+  // Verified live 2026-09-03: writing fan=1 put the thermostat in Auto and
+  // fan=0 ran the blower continuously, the opposite of the naive guess.
+  assert.equal(fanValueToMode(0), 'on', 'device fan=0 is ON (continuous)');
+  assert.equal(fanValueToMode(1), 'auto', 'device fan=1 is AUTO');
+  assert.equal(FAN_MODE_TO_VALUE.on, 0, 'fan ON commands fan=0');
+  assert.equal(FAN_MODE_TO_VALUE.auto, 1, 'fan AUTO commands fan=1');
+});
+
 test('fan mode is unknown for an absent or unrecognised fan value', () => {
   assert.equal(fanValueToMode(null), null);
   assert.equal(fanValueToMode(42), null);

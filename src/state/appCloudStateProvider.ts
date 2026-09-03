@@ -77,7 +77,7 @@ interface ShadowState {
   hs?: number; // heat setpoint (F)
   cs?: number; // cool setpoint (F)
   sys?: number; // 0=off 1=heat 2=cool 3=auto
-  fan?: number; // fan mode (see FAN_MODE_TO_VALUE)
+  fan?: number; // 0=on (continuous) 1=auto — verified live, see FAN_MODE_TO_VALUE
   hum?: number; // humidity
 }
 
@@ -195,8 +195,8 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
   }
 
   /**
-   * Set the fan mode via the device `fan` field. See FAN_MODE_TO_VALUE for
-   * the (unverified) encoding.
+   * Set the fan mode via the device `fan` field (0=on, 1=auto; verified
+   * live, see FAN_MODE_TO_VALUE).
    *
    * @throws {StateProviderUnavailableError} when the shadow write fails.
    */

@@ -503,7 +503,7 @@ test('readState maps the shadow fan field to a fan mode', async () => {
 
   const snapshot = await provider.readState();
 
-  assert.equal(snapshot.fanMode, 'auto');
+  assert.equal(snapshot.fanMode, 'on', 'fan=0 is ON/continuous (verified live)');
 });
 
 test('setFanMode writes the device fan field', async () => {
@@ -518,5 +518,6 @@ test('setFanMode writes the device fan field', async () => {
   const puts = fetchMock.calls.filter((call) => call.method === 'PUT');
   assert.equal(puts.length, 2);
   const desired = puts.map((put) => JSON.parse(new URL(put.url).searchParams.get('shadowNewValue') ?? '{}') as Record<string, unknown>);
-  assert.deepEqual(desired, [{ fan: 1 }, { fan: 0 }]);
+  // Fan mode -> device fan: on->0, auto->1 (verified live; inverted polarity)
+  assert.deepEqual(desired, [{ fan: 0 }, { fan: 1 }]);
 });

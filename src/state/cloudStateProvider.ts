@@ -189,8 +189,8 @@ export class CloudStateProvider implements ThermostatStateProvider {
   }
 
   /**
-   * Set the fan mode via the device `fan` field. See FAN_MODE_TO_VALUE for
-   * the (unverified) encoding.
+   * Set the fan mode via the device `fan` field (0=on, 1=auto; verified
+   * live, see FAN_MODE_TO_VALUE).
    *
    * @throws {StateProviderUnavailableError} when the shadow/update exchange fails.
    */

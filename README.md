@@ -322,8 +322,8 @@ rather than merely believed.
 - [x] Non-interference: clear satisfied shadow `desired`, hold pending HomeKit
       writes, per-provider polling floors, "No Response" on repeated failure
 - [ ] Confirm the `sys` off/auto mapping against a real device
-- [ ] Confirm the `fan` on/auto encoding against a real device (assumed 0=auto,
-      1=on in `src/state/modeMap.ts`; the polarity has not been observed live)
+- [x] Confirm the `fan` on/auto encoding against a real device (0=on, 1=auto —
+      inverted like `sys`; fixed in 0.2.1)
 - [ ] Optional: mDNS/scan discovery instead of manual host config
 
 ## License

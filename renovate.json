@@ -1,6 +1,13 @@
 {
-  "$schema": "https://renovatebot.com",
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "description": "Hold TypeScript at 6.x. typescript-eslint peer-requires typescript '>=4.8.4 <6.1.0' (still true as of 8.70.0), so a TS 7 bump has no resolvable tree: Renovate cannot refresh package-lock.json and opens the PR with package.json alone, which fails `npm ci` on every CI leg. Remove this rule once typescript-eslint declares TS 7 support.",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
+    }
   ]
 }

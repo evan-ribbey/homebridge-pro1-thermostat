@@ -3,7 +3,23 @@
   "extends": [
     "config:recommended"
   ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true
+  },
   "packageRules": [
+    {
+      "description": "Automerge minor, patch, pin and digest updates once CI passes. Majors still open a PR for manual review.",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false
+    },
+    {
+      "description": "Wait a few days before proposing npm releases, so a compromised or yanked version is usually caught upstream before it can be automerged here.",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "3 days"
+    },
     {
       "description": "Hold TypeScript at 6.x. typescript-eslint peer-requires typescript '>=4.8.4 <6.1.0' (still true as of 8.70.0), so a TS 7 bump has no resolvable tree: Renovate cannot refresh package-lock.json and opens the PR with package.json alone, which fails `npm ci` on every CI leg. Remove this rule once typescript-eslint declares TS 7 support.",
       "matchPackageNames": ["typescript"],

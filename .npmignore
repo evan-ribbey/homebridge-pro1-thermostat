@@ -140,3 +140,5 @@ web_modules/
 .pnp.*
 
 test/
+# Repo tooling config
+renovate.json

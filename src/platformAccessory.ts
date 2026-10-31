@@ -33,6 +33,9 @@ const FAN_MODE_TO_ACTIVE: Readonly<Record<FanMode, 0 | 1>> = { auto: 0, on: 1 };
  */
 const TARGET_TEMPERATURE_MIN_C = 7;
 const TARGET_TEMPERATURE_MAX_C = 35;
+/** TargetHeatingCoolingState values offered in the Home app: Off, Heat, Cool. */
+const SUPPORTED_TARGET_MODES = [0, 1, 2] as const;
+
 /** The device works in whole °F (~0.56 °C); 0.5 °C is the closest HomeKit step. */
 const TARGET_TEMPERATURE_STEP_C = 0.5;
 
@@ -131,9 +134,13 @@ export class Pro1ThermostatAccessory {
     this.service.getCharacteristic(this.platform.Characteristic.CurrentHeatingCoolingState)
       .onGet(this.getCurrentHeatingCoolingState.bind(this));
 
-    this.service.getCharacteristic(this.platform.Characteristic.TargetHeatingCoolingState)
+    const targetMode = this.service.getCharacteristic(this.platform.Characteristic.TargetHeatingCoolingState)
       .onGet(this.getTargetHeatingCoolingState.bind(this))
       .onSet(this.setTargetHeatingCoolingState.bind(this));
+    // Pro1 "Auto" is a fan setting (exposed on the Fan v2 service), not a
+    // heat/cool changeover mode, so the Home app mode picker offers only
+    // Off / Heat / Cool. Offering Auto sent an unverified sys=3 to the device.
+    targetMode.setProps?.({ validValues: [...SUPPORTED_TARGET_MODES] });
 
     this.service.getCharacteristic(this.platform.Characteristic.CurrentTemperature)
       .onGet(this.getCurrentTemperature.bind(this));
@@ -244,7 +251,11 @@ export class Pro1ThermostatAccessory {
       && !this.isSupersededByPendingWrite('TargetTemperature', snapshot.targetTemperatureCelsius)) {
       this.pushIfChanged('TargetTemperature', this.platform.Characteristic.TargetTemperature, snapshot.targetTemperatureCelsius);
     }
-    if (snapshot.targetHeatingCoolingState !== null
+    if (snapshot.targetHeatingCoolingState === 3) {
+      // Not offered to HomeKit (see SUPPORTED_TARGET_MODES); pushing it would
+      // be rejected as out of range. Leave the last known mode in place.
+      this.platform.log.debug(`[${this.device.name}] Device reports auto mode (sys=3), which is not exposed to HomeKit.`);
+    } else if (snapshot.targetHeatingCoolingState !== null
       && !this.isSupersededByPendingWrite('TargetHeatingCoolingState', snapshot.targetHeatingCoolingState)) {
       this.pushIfChanged('TargetHeatingCoolingState', this.platform.Characteristic.TargetHeatingCoolingState, snapshot.targetHeatingCoolingState);
     }
@@ -382,8 +393,9 @@ export class Pro1ThermostatAccessory {
     if (this.isUnreachable()) {
       throw this.communicationFailure();
     }
+    const polled = this.lastSnapshot?.targetHeatingCoolingState ?? null;
     return this.readPendingWrite('TargetHeatingCoolingState')?.value
-      ?? this.lastSnapshot?.targetHeatingCoolingState
+      ?? (polled === 3 ? null : polled) // auto is not offered to HomeKit
       ?? DEFAULT_HEATING_COOLING_STATE;
   }
 

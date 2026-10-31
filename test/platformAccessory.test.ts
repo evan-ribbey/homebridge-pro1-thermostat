@@ -13,9 +13,10 @@ import {
 } from '../src/state/index.js';
 
 interface FakeProps {
-  minValue: number;
-  maxValue: number;
-  minStep: number;
+  minValue?: number;
+  maxValue?: number;
+  minStep?: number;
+  validValues?: number[];
 }
 
 class FakeCharacteristic {
@@ -393,8 +394,8 @@ test('TargetTemperature advertises a range covering the Pro1 setpoint span', asy
   const props = accessory.getService('Thermostat')!.getCharacteristic('TargetTemperature').props;
   assert.ok(props !== null, 'setProps must be called so HomeKit does not clamp low setpoints');
   // 45 °F freeze-protection setpoints are 7.2 °C, below HomeKit's 10 °C default.
-  assert.ok(props.minValue <= 7.3, `minValue ${props.minValue} must reach a 45F setpoint`);
-  assert.ok(props.maxValue >= 32.3, `maxValue ${props.maxValue} must reach a 90F setpoint`);
+  assert.ok((props.minValue ?? Infinity) <= 7.3, `minValue ${props.minValue} must reach a 45F setpoint`);
+  assert.ok((props.maxValue ?? -Infinity) >= 32.3, `maxValue ${props.maxValue} must reach a 90F setpoint`);
 });
 
 test('an unchanged reading is not re-pushed to HomeKit on every poll', async () => {
@@ -598,4 +599,21 @@ test('a setpoint the device stores in whole degrees F still counts as confirmed'
   state.snapshot = snapshot({ targetTemperatureCelsius: 19 });
   await thermostat.startPolling();
   assert.equal(await thermostat.getTargetTemperature(), 19, 'the hold must release once the rounded value is reported');
+});
+
+test('the Home app mode picker offers Off, Heat and Cool but not Auto', async () => {
+  const { accessory } = makeAccessory(staticProvider());
+  const props = accessory.getService('Thermostat')!.getCharacteristic('TargetHeatingCoolingState').props;
+  assert.ok(props !== null, 'setProps must restrict the mode picker');
+  assert.deepEqual(props.validValues, [0, 1, 2], 'Pro1 "Auto" is a fan setting, not a heat/cool changeover mode');
+});
+
+test('a device reporting auto mode is not pushed to HomeKit as an unsupported value', async () => {
+  const { provider } = mutableProvider({ targetHeatingCoolingState: 3 });
+  const { accessory, thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+
+  const pushed = accessory.getService('Thermostat')!.getCharacteristic('TargetHeatingCoolingState').updatedValues;
+  assert.deepEqual(pushed, []);
 });

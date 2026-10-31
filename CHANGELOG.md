@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] - 2026-10-31
+
+### Changed
+
+- **The Home app mode picker now offers only Off, Heat and Cool.** On Pro1
+  thermostats "Auto" is a fan setting, which is on the fan tile. The Auto
+  mode option sent an untested mode value to the thermostat.
+- The README has been rewritten for Homebridge users. Protocol and
+  reverse-engineering notes are now in `docs/technical-notes.md`.
+
+### Removed
+
+- `renovate.json` is no longer included in the npm package.
+
 ## [0.2.2] - 2026-10-31
 
 ### Fixed
@@ -54,6 +68,7 @@ All notable changes to this project are documented here. The format follows
 - Fan mode control through a Fan v2 service: On runs the blower
   continuously, and Off returns it to Auto.
 
+[0.2.3]: https://git.ribbey.net/evan/homebridge-pro1-thermostat/compare/v0.2.2...v0.2.3
 [0.2.2]: https://git.ribbey.net/evan/homebridge-pro1-thermostat/compare/v0.2.1...v0.2.2
 [0.2.1]: https://git.ribbey.net/evan/homebridge-pro1-thermostat/compare/v0.2.0...v0.2.1
 [0.2.0]: https://git.ribbey.net/evan/homebridge-pro1-thermostat/releases/tag/v0.2.0

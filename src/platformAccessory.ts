@@ -49,6 +49,16 @@ const TARGET_TEMPERATURE_STEP_C = 0.5;
 const PENDING_WRITE_TTL_MS = 120_000;
 
 /**
+ * How close a polled setpoint must be to the commanded one to count as the
+ * device confirming it, in Celsius. The write goes out in °F and the device
+ * may keep only whole degrees, so 24 °C (75.2 °F) can come back as 75 °F
+ * (23.89 °C). An exact comparison never matched in that case, so the hold ran
+ * for the full window and masked any change made at the wall meanwhile.
+ * Half a °F is 0.28 °C; this allows for that plus the 2-decimal rounding.
+ */
+const SETPOINT_CONFIRM_TOLERANCE_C = 0.3;
+
+/**
  * Consecutive failed polls before the accessory reports "No Response" instead
  * of continuing to serve stale readings as though they were live. Three polls
  * avoids flapping on a single transient network blip.
@@ -283,7 +293,10 @@ export class Pro1ThermostatAccessory {
     if (pending === null) {
       return false;
     }
-    if (pending.value === polledValue) {
+    const confirmed = characteristic === 'TargetTemperature'
+      ? Math.abs(pending.value - polledValue) <= SETPOINT_CONFIRM_TOLERANCE_C
+      : pending.value === polledValue;
+    if (confirmed) {
       // The device has caught up; stop overriding.
       this.setPendingWrite(characteristic, null);
       return false;
@@ -310,6 +323,20 @@ export class Pro1ThermostatAccessory {
       return null;
     }
     return pending;
+  }
+
+  /**
+   * Record a value the user just commanded from the Home app.
+   *
+   * HomeKit already holds that value, so it also becomes the "last pushed"
+   * value. Without this, the dedupe in pushIfChanged still remembered the
+   * pre-command reading: if the device never applied the command, the
+   * unchanged reading was skipped as a duplicate once the hold lapsed, and
+   * HomeKit kept showing the commanded value indefinitely.
+   */
+  private recordCommand(characteristic: CommandedCharacteristic, value: number): void {
+    this.setPendingWrite(characteristic, { value, expiresAtMs: Date.now() + PENDING_WRITE_TTL_MS });
+    this.lastPushedValues.set(characteristic, value);
   }
 
   private setPendingWrite(characteristic: CommandedCharacteristic, pending: PendingWrite | null): void {
@@ -374,7 +401,7 @@ export class Pro1ThermostatAccessory {
       }
       throw error;
     }
-    this.setPendingWrite('TargetHeatingCoolingState', { value: mode, expiresAtMs: Date.now() + PENDING_WRITE_TTL_MS });
+    this.recordCommand('TargetHeatingCoolingState', mode);
   }
 
   async getCurrentTemperature(): Promise<CharacteristicValue> {
@@ -404,7 +431,7 @@ export class Pro1ThermostatAccessory {
       }
       throw error;
     }
-    this.setPendingWrite('TargetTemperature', { value: celsius, expiresAtMs: Date.now() + PENDING_WRITE_TTL_MS });
+    this.recordCommand('TargetTemperature', celsius);
   }
 
   async getTemperatureDisplayUnits(): Promise<CharacteristicValue> {
@@ -452,6 +479,6 @@ export class Pro1ThermostatAccessory {
       }
       throw error;
     }
-    this.setPendingWrite('FanActive', { value: active, expiresAtMs: Date.now() + PENDING_WRITE_TTL_MS });
+    this.recordCommand('FanActive', active);
   }
 }

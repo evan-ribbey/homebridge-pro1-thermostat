@@ -521,3 +521,20 @@ test('setFanMode writes the device fan field', async () => {
   // Fan mode -> device fan: on->0, auto->1 (verified live; inverted polarity)
   assert.deepEqual(desired, [{ fan: 0 }, { fan: 1 }]);
 });
+
+test('an HTTP 401 drops the cached access token so the next request re-authenticates', async () => {
+  const responses: Record<string, MockEntry> = {
+    '/v3/thermostats/t-123': { status: 401, body: '{"message":"Unauthorized"}' },
+  };
+  installFetchMock(responses);
+  const provider = makeProvider();
+
+  await assert.rejects(() => provider.readState(), StateProviderUnavailableError);
+  assert.equal(cognitoMock.authenticateUserCalls, 1);
+  assert.equal(cognitoMock.refreshSessionCalls, 0);
+
+  // The server rejected a token that had not expired; it must not be reused.
+  responses['/v3/thermostats/t-123'] = detailResponse({ at: 70, sys: 1 });
+  await provider.readState();
+  assert.equal(cognitoMock.refreshSessionCalls, 1, 'a rejected token must be refreshed rather than resent');
+});

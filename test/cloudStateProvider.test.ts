@@ -483,3 +483,32 @@ test('readState clears a satisfied desired fan entry like any other commanded ke
   const parsed = JSON.parse(clients[1].published[0].payload) as { state: { desired: Record<string, unknown> } };
   assert.deepEqual(parsed.state.desired, { fan: null });
 });
+
+test('a failed MQTT exchange discards cached provisioning so new credentials are picked up', async () => {
+  const fetchMock = installGoodFetchMock();
+  let failNext = true;
+  const clients: FakeMqttClient[] = [];
+  const goodFactory = makeFactory(clients, { state: { at: 70, hs: 70, sys: 2 } });
+  const factory: MqttClientFactory = (options) => {
+    if (failNext) {
+      failNext = false;
+      const client = new FakeMqttClient();
+      setImmediate(() => {
+        client.emit('error', new Error('certificate rejected'));
+      });
+      return client;
+    }
+    return goodFactory(options);
+  };
+  const provider = new CloudStateProvider('192.0.2.1', 80, undefined, factory);
+
+  await assert.rejects(() => provider.readState(), StateProviderUnavailableError);
+  const fetchesAfterFailure = fetchMock.calls.length;
+  assert.equal(fetchesAfterFailure, 4);
+
+  await provider.readState();
+  assert.equal(fetchMock.calls.length, 8, 'provisioning must be re-fetched from the device after a failed exchange');
+
+  await provider.readState();
+  assert.equal(fetchMock.calls.length, 8, 'a healthy exchange keeps using the cache');
+});

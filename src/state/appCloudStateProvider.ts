@@ -385,6 +385,13 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
       );
     }
 
+    if (response.status === 401 || response.status === 403) {
+      // The server rejected a token we still believe is valid (revoked, or
+      // clock skew). Without this the same token was resent until its own
+      // expiry, leaving the accessory "No Response" for up to an hour. Mark
+      // it expired so the next request refreshes, falling back to a login.
+      this.accessTokenExpiryMs = 0;
+    }
     if (response.status >= 300) {
       this.log.debug(`AppCloudStateProvider: ${method} ${path} returned HTTP ${response.status}`);
       throw new StateProviderUnavailableError(`App cloud ${method} ${path} returned HTTP ${response.status}`);

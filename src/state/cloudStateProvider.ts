@@ -511,6 +511,13 @@ export class CloudStateProvider implements ThermostatStateProvider {
           fail(`MQTT ${operation} error: ${err.message}`);
         });
       });
+    } catch (error) {
+      // Provisioning was cached for the provider's lifetime, so a device that
+      // had been reset or re-provisioned (new cert/key) failed every poll
+      // until Homebridge restarted. Re-read it from the device next time; that
+      // is four LAN requests, and only after a failure.
+      this.provisioningCache = null;
+      throw error;
     } finally {
       client.end(true);
     }

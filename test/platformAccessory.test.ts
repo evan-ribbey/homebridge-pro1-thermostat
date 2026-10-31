@@ -535,3 +535,67 @@ test('the fan reports No Response alongside the thermostat', async () => {
 
   await assert.rejects(() => thermostat.getFanActive());
 });
+
+test('a command the device never applied is corrected in HomeKit once the window lapses', async () => {
+  const { provider } = mutableProvider({ targetTemperatureCelsius: 21 });
+  const { accessory, thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling(); // pushes 21
+  await thermostat.setTargetTemperature(24); // HomeKit now shows 24
+
+  const pushed = accessory.getService('Thermostat')!.getCharacteristic('TargetTemperature').updatedValues;
+  const pushCountAtSet = pushed.length;
+
+  // The device ignored the command and still reports 21 after the window.
+  const realNow = Date.now;
+  Date.now = () => realNow() + 130_000;
+  try {
+    await thermostat.startPolling();
+  } finally {
+    Date.now = realNow;
+  }
+
+  assert.deepEqual(
+    pushed.slice(pushCountAtSet),
+    [21],
+    'HomeKit holds the commanded 24, so the device value must be re-pushed even though 21 was pushed before',
+  );
+});
+
+test('a fan command the device never applied is corrected in HomeKit once the window lapses', async () => {
+  const { provider } = mutableProvider({ fanMode: 'auto' });
+  const { accessory, thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling(); // pushes Active=0
+  await thermostat.setFanActive(1);
+
+  const pushed = accessory.getService('Fanv2')!.getCharacteristic('Active').updatedValues;
+  const pushCountAtSet = pushed.length;
+
+  const realNow = Date.now;
+  Date.now = () => realNow() + 130_000;
+  try {
+    await thermostat.startPolling();
+  } finally {
+    Date.now = realNow;
+  }
+
+  assert.deepEqual(pushed.slice(pushCountAtSet), [0]);
+});
+
+test('a setpoint the device stores in whole degrees F still counts as confirmed', async () => {
+  const { provider, state } = mutableProvider({ targetTemperatureCelsius: 21 });
+  const { thermostat } = makeAccessory(provider);
+
+  await thermostat.startPolling();
+  await thermostat.setTargetTemperature(24); // 75.2 F on the wire
+
+  // The device keeps whole degrees: 75 F reads back as 23.89 C.
+  state.snapshot = snapshot({ targetTemperatureCelsius: 23.89 });
+  await thermostat.startPolling();
+
+  // That confirmed the command, so a wall change right after must come through.
+  state.snapshot = snapshot({ targetTemperatureCelsius: 19 });
+  await thermostat.startPolling();
+  assert.equal(await thermostat.getTargetTemperature(), 19, 'the hold must release once the rounded value is reported');
+});

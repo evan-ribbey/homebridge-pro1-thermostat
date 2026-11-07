@@ -1,11 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
   ],
   "lockFileMaintenance": {
     "enabled": true,
-    "automerge": true
+    "automerge": false
   },
   "packageRules": [
     {
@@ -19,6 +20,16 @@
       "description": "Wait a few days before proposing npm releases, so a compromised or yanked version is usually caught upstream before it can be automerged here.",
       "matchDatasources": ["npm"],
       "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Actions run on the CI runner as soon as they merge, so wait before proposing them too.",
+      "matchManagers": ["github-actions"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Runtime dependencies ship to users, so they always need manual review. Must stay after the automerge rule.",
+      "matchDepTypes": ["dependencies"],
+      "automerge": false
     },
     {
       "description": "Hold TypeScript at 6.x. typescript-eslint peer-requires typescript '>=4.8.4 <6.1.0' (still true as of 8.70.0), so a TS 7 bump has no resolvable tree: Renovate cannot refresh package-lock.json and opens the PR with package.json alone, which fails `npm ci` on every CI leg. Remove this rule once typescript-eslint declares TS 7 support.",

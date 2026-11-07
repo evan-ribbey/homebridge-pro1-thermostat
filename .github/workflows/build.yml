@@ -4,10 +4,9 @@
 # on Gitea as-is and stays valid if the repo is ever mirrored to GitHub.
 #
 # Gitea-specific choices:
-#   - actions/* are pinned to @v4. Gitea proxies `uses:` to github.com, but the
-#     action still has to run on a JS runtime the runner provides. v5 of these
-#     actions requires node24, which only recent act_runner builds ship; v4
-#     runs on node20 and is supported by every current act_runner.
+#   - actions/* are pinned to full commit SHAs because tags can be moved. Gitea
+#     proxies `uses:` to github.com, but the action still has to run on a JS
+#     runtime the runner provides. Renovate proposes updates.
 #   - No `cache:` on setup-node. It needs the Actions cache service, which is
 #     optional in act_runner and fails the step outright when disabled.
 #   - No `concurrency:` block, which older Gitea versions reject at parse time.
@@ -16,6 +15,9 @@
 name: Build and Lint
 
 on: [push, pull_request]
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -31,15 +33,19 @@ jobs:
 
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Keep the job token out of .git/config, away from later steps.
+          persist-credentials: false
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
 
       - name: Install dependencies
-        run: npm ci
+        # No dependency's install script is needed, so none get to run here.
+        run: npm ci --ignore-scripts
 
       - name: Lint
         run: npm run lint
@@ -51,18 +57,6 @@ jobs:
         run: npm test
 
       - name: Verify the published package contents
-        # Catches a missing dist/ or the bundled AWS IoT root CA dropping out
-        # of the tarball, which would only otherwise surface after publishing.
-        run: |
-          npm pack --dry-run
-          npm pack --dry-run --json > /tmp/pack.json
-          node -e "
-            const files = require('/tmp/pack.json')[0].files.map(f => f.path);
-            const required = ['dist/index.js', 'certs/aws-iot-classic-root.pem', 'config.schema.json'];
-            const missing = required.filter(f => !files.includes(f));
-            if (missing.length) {
-              console.error('Missing from package tarball: ' + missing.join(', '));
-              process.exit(1);
-            }
-            console.log('Package contains all required files (' + files.length + ' total).');
-          "
+        # Catches a required file dropping out of the tarball, or something
+        # unexpected (such as a secret) getting in, before it can be published.
+        run: npm run check:pack

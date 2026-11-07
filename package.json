@@ -23,6 +23,12 @@
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "certs",
+    "config.schema.json",
+    "CHANGELOG.md"
+  ],
   "homebridge": {
     "pluginType": "platform",
     "schema": "config.schema.json"
@@ -35,7 +41,8 @@
     "build": "rimraf ./dist && tsc",
     "lint": "eslint . --max-warnings=0",
     "test": "rimraf dist-test && tsc -p tsconfig.test.json && node --test \"dist-test/test/*.test.js\"",
-    "prepublishOnly": "npm run lint && npm run build",
+    "check:pack": "npm pack --dry-run --json | node scripts/check-package-contents.mjs",
+    "prepublishOnly": "test -z \"$(git status --porcelain)\" || { echo 'Refusing to publish: uncommitted changes.' >&2; exit 1; }; npm run lint && npm test && npm run build && npm run check:pack",
     "watch": "npm run build && npm link && nodemon"
   },
   "devDependencies": {

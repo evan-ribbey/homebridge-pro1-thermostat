@@ -606,6 +606,8 @@ test('the Home app mode picker offers Off, Heat and Cool but not Auto', async ()
   const props = accessory.getService('Thermostat')!.getCharacteristic('TargetHeatingCoolingState').props;
   assert.ok(props !== null, 'setProps must restrict the mode picker');
   assert.deepEqual(props.validValues, [0, 1, 2], 'Pro1 "Auto" is a fan setting, not a heat/cool changeover mode');
+  assert.equal(props.minValue, 0);
+  assert.equal(props.maxValue, 2, 'the range must agree with validValues: the HAP default maxValue of 3 is Auto');
 });
 
 test('a device reporting auto mode is not pushed to HomeKit as an unsupported value', async () => {

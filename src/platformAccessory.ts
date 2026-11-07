@@ -140,7 +140,12 @@ export class Pro1ThermostatAccessory {
     // Pro1 "Auto" is a fan setting (exposed on the Fan v2 service), not a
     // heat/cool changeover mode, so the Home app mode picker offers only
     // Off / Heat / Cool. Offering Auto sent an unverified sys=3 to the device.
-    targetMode.setProps?.({ validValues: [...SUPPORTED_TARGET_MODES] });
+    // The range must agree with validValues: the HAP default maxValue of 3 is Auto.
+    targetMode.setProps?.({
+      minValue: Math.min(...SUPPORTED_TARGET_MODES),
+      maxValue: Math.max(...SUPPORTED_TARGET_MODES),
+      validValues: [...SUPPORTED_TARGET_MODES],
+    });
 
     this.service.getCharacteristic(this.platform.Characteristic.CurrentTemperature)
       .onGet(this.getCurrentTemperature.bind(this));

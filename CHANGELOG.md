@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- The mode characteristic's range now matches its allowed values (0–2), so it
+  no longer advertises a maximum of 3 (Auto). This is a metadata cleanup.
+
+### Notes
+
+- If Auto still appears in the Home app after updating to 0.2.3 or later,
+  disable the accessory in Homebridge, then re-enable it. Restarting Homebridge
+  or force-closing the Home app may not clear it. HomeKit may treat it as a new
+  accessory, so you may need to set up its room, name, scenes and automations
+  again.
+
 ## [0.2.3] - 2026-10-31
 
 ### Changed

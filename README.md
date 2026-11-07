@@ -120,6 +120,7 @@ with a message in the Homebridge log, and the others still load.
 | A Home app change reverts after about two minutes | The thermostat never applied it. Check that it's online in the PRO1 Connect app. |
 | The thermostat flickers offline in the PRO1 Connect app | You're using the `cloud` provider. Switch to `app`. |
 | "No Response" in the Home app | Check the thermostat's Wi-Fi connection and your credentials. For `cloud` and `local`, check that its IP address hasn't changed. |
+| Auto still appears in the Home app mode picker after updating | Disable the accessory in Homebridge, then re-enable it. Restarting Homebridge or force-closing the Home app may not clear it. HomeKit may treat it as a new accessory, so you may need to set up its room, name, scenes and automations again. |
 
 For more detail, turn on **Homebridge Debug Mode** in the Homebridge UI
 settings and look for lines starting with the thermostat's name.

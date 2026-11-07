@@ -20,8 +20,6 @@ contributors. User-facing documentation is in the [README](../README.md).
     `data` is sometimes base64-wrapped JSON.
   - `PUT /v3/shadow?thingId={thingId}&shadowNewValue={url-encoded JSON}` → `{success: true}`.
 
-See also [app-cloud-api.md](app-cloud-api.md).
-
 ### `cloud` — AWS IoT shadow (poll mode)
 
 The plugin fetches the thermostat's own AWS IoT credentials from its local

@@ -2,17 +2,17 @@
   "name": "homebridge-pro1-thermostat",
   "displayName": "Pro1 Thermostat",
   "type": "module",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Homebridge plugin for Pro1 WiFi thermostats (T701 / T705 / T721 / T755).",
   "author": "Evan Ribbey",
   "license": "Apache-2.0",
-  "homepage": "https://git.ribbey.net/evan/homebridge-pro1-thermostat#readme",
+  "homepage": "https://github.com/evan-ribbey/homebridge-pro1-thermostat#readme",
   "repository": {
     "type": "git",
-    "url": "https://git.ribbey.net/evan/homebridge-pro1-thermostat.git"
+    "url": "git+https://github.com/evan-ribbey/homebridge-pro1-thermostat.git"
   },
   "bugs": {
-    "url": "https://git.ribbey.net/evan/homebridge-pro1-thermostat/issues"
+    "url": "https://github.com/evan-ribbey/homebridge-pro1-thermostat/issues"
   },
   "keywords": [
     "homebridge-plugin",

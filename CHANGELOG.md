@@ -4,12 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.4] - 2026-11-07
 
 ### Changed
 
 - The mode characteristic's range now matches its allowed values (0–2), so it
   no longer advertises a maximum of 3 (Auto). This is a metadata cleanup.
+- The source, homepage and issue links now point to the
+  [GitHub repository](https://github.com/evan-ribbey/homebridge-pro1-thermostat). With them, the Homebridge UI can show
+  release notes for updates after this one.
+- The README no longer suggests choosing Auto when the thermostat is off.
 
 ### Notes
 
@@ -83,7 +87,8 @@ All notable changes to this project are documented here. The format follows
 - Fan mode control through a Fan v2 service: On runs the blower
   continuously, and Off returns it to Auto.
 
-[0.2.3]: https://git.ribbey.net/evan/homebridge-pro1-thermostat/compare/v0.2.2...v0.2.3
-[0.2.2]: https://git.ribbey.net/evan/homebridge-pro1-thermostat/compare/v0.2.1...v0.2.2
-[0.2.1]: https://git.ribbey.net/evan/homebridge-pro1-thermostat/compare/v0.2.0...v0.2.1
-[0.2.0]: https://git.ribbey.net/evan/homebridge-pro1-thermostat/releases/tag/v0.2.0
+[0.2.4]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/releases/tag/v0.2.0

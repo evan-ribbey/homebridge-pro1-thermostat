@@ -1,7 +1,7 @@
 # Runs on a self-hosted Gitea Runner (act_runner) on Linux.
 #
 # Gitea reads both .gitea/workflows/ and .github/workflows/, so this file works
-# on Gitea as-is and stays valid if the repo is ever mirrored to GitHub.
+# on Gitea as-is and on the GitHub mirror, where it uses GitHub-hosted runners.
 #
 # Gitea-specific choices:
 #   - actions/* are pinned to full commit SHAs because tags can be moved. Gitea

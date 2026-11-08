@@ -116,7 +116,7 @@ with a message in the Homebridge log, and the others still load.
 | "App cloud login failed" in the log | Check the email and password by signing in to the PRO1 Connect app with them. |
 | "account has N thermostats and no thingId is configured" | Copy the right ID from that log message into the `thingId` option of each entry. |
 | The wrong thermostat shows up | Set `thingId` explicitly (see above). |
-| "thermostat is off" when changing the temperature | With the `app` provider, the temperature can't be set while the thermostat is off. Choose Heat, Cool or Auto first. |
+| "thermostat is off" when changing the temperature | With the `app` provider, the temperature can't be set while the thermostat is off. Choose Heat or Cool first. |
 | A Home app change reverts after about two minutes | The thermostat never applied it. Check that it's online in the PRO1 Connect app. |
 | The thermostat flickers offline in the PRO1 Connect app | You're using the `cloud` provider. Switch to `app`. |
 | "No Response" in the Home app | Check the thermostat's Wi-Fi connection and your credentials. For `cloud` and `local`, check that its IP address hasn't changed. |
@@ -156,8 +156,12 @@ npm test
 ```
 
 How the plugin talks to the thermostat is covered in
-[docs/technical-notes.md](docs/technical-notes.md). The source is on
-[Gitea](https://git.ribbey.net/evan/homebridge-pro1-thermostat).
+[docs/technical-notes.md](docs/technical-notes.md).
+
+The [GitHub repository](https://github.com/evan-ribbey/homebridge-pro1-thermostat) is a read-only mirror of a private server, so
+pull requests can't be merged there. Please open an
+[issue](https://github.com/evan-ribbey/homebridge-pro1-thermostat/issues) for bugs and ideas. Pull requests are welcome as
+proposals, and accepted changes are applied upstream with credit.
 
 ## Disclaimer
 

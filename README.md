@@ -1,14 +1,21 @@
+<div align="center">
+
 # Homebridge Pro1 Thermostat
 
-<p align="center">
+**Control your Pro1 Wi-Fi thermostat from the Apple Home app, Siri and HomeKit automations.**
 
-<a href="https://www.npmjs.com/package/homebridge-pro1-thermostat"><img alt="npm version" src="https://img.shields.io/npm/v/homebridge-pro1-thermostat.svg"></a>
-<a href="https://www.npmjs.com/package/homebridge-pro1-thermostat"><img alt="npm downloads" src="https://img.shields.io/npm/dt/homebridge-pro1-thermostat.svg"></a>
+[![npm](https://img.shields.io/npm/v/homebridge-pro1-thermostat?logo=npm&label=npm)](https://www.npmjs.com/package/homebridge-pro1-thermostat)
+[![downloads](https://img.shields.io/npm/dt/homebridge-pro1-thermostat?label=downloads)](https://www.npmjs.com/package/homebridge-pro1-thermostat)
+[![Build and Lint](https://github.com/evan-ribbey/homebridge-pro1-thermostat/actions/workflows/build.yml/badge.svg?branch=latest)](https://github.com/evan-ribbey/homebridge-pro1-thermostat/actions/workflows/build.yml)
+[![homebridge](https://img.shields.io/badge/homebridge-1.8%20%7C%202.x-491F59?logo=homebridge&logoColor=white)](https://homebridge.io)
+[![node](https://img.shields.io/node/v/homebridge-pro1-thermostat?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![license](https://img.shields.io/npm/l/homebridge-pro1-thermostat)](LICENSE)
 
-</p>
+[Setup](#setup) · [Options](#options) · [Troubleshooting](#troubleshooting) · [Changelog](CHANGELOG.md) · [Report a bug](https://github.com/evan-ribbey/homebridge-pro1-thermostat/issues)
 
-Control your Pro1 Wi-Fi thermostat from the Apple Home app, Siri and HomeKit
-automations.
+</div>
+
+## Features
 
 The plugin adds each thermostat to HomeKit with:
 
@@ -158,10 +165,12 @@ npm test
 How the plugin talks to the thermostat is covered in
 [docs/technical-notes.md](docs/technical-notes.md).
 
-The [GitHub repository](https://github.com/evan-ribbey/homebridge-pro1-thermostat) is a read-only mirror of a private server, so
-pull requests can't be merged there. Please open an
-[issue](https://github.com/evan-ribbey/homebridge-pro1-thermostat/issues) for bugs and ideas. Pull requests are welcome as
-proposals, and accepted changes are applied upstream with credit.
+The [GitHub repository](https://github.com/evan-ribbey/homebridge-pro1-thermostat)
+is a read-only mirror of a private server, so pull requests can't be merged
+there. Please open an
+[issue](https://github.com/evan-ribbey/homebridge-pro1-thermostat/issues)
+for bugs and ideas. Pull requests are welcome as proposals, and accepted
+changes are applied upstream with credit.
 
 ## Disclaimer
 
@@ -170,4 +179,4 @@ Technologies.
 
 ## License
 
-Apache-2.0
+[Apache-2.0](LICENSE)

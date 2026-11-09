@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.5] - 2026-11-08
+
+### Added
+
+- A Ko-fi donation link. The Homebridge UI now shows a donate (heart) button on
+  the plugin card, and the GitHub repository shows a Sponsor button.
+
+### Fixed
+
+- Setpoint changes are sent in whole degrees Fahrenheit, which is how the
+  thermostat stores them. A fractional value (for example 71.6 °F for 22 °C)
+  never matched what the thermostat reported back. With the `cloud` provider,
+  it then stayed in the shadow as a standing command, which could undo a later
+  change made at the thermostat.
+- A command that fails (for example, the cloud is unreachable) now logs a
+  one-line warning and shows as "No Response" in the Home app. Before, Homebridge
+  logged it as an unhandled error with a full stack trace.
+
 ## [0.2.4] - 2026-11-07
 
 ### Changed
@@ -87,6 +105,7 @@ All notable changes to this project are documented here. The format follows
 - Fan mode control through a Fan v2 service: On runs the blower
   continuously, and Off returns it to Auto.
 
+[0.2.5]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.1...v0.2.2

@@ -139,6 +139,18 @@ export function celsiusToFahrenheit(celsius: number): number {
   return Math.round(((celsius * 9) / 5 + 32) * 10) / 10;
 }
 
+/**
+ * Celsius → whole Fahrenheit, for setpoint writes.
+ *
+ * The device stores setpoints in whole °F. A fractional write (22 °C → 71.6)
+ * comes back in `reported` as 72, so the shadow `desired` entry never matched
+ * and was never cleared — leaving a standing order that could put the old
+ * setpoint back after a change made at the thermostat.
+ */
+export function celsiusToWholeFahrenheit(celsius: number): number {
+  return Math.round((celsius * 9) / 5 + 32);
+}
+
 /** Read a shadow field as a finite number, or null when absent/invalid. */
 export function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;

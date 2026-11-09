@@ -32,7 +32,7 @@ import {
   HOMEKIT_TO_SYS,
   SYS_TO_TARGET_MODE,
   FAN_MODE_TO_VALUE,
-  celsiusToFahrenheit,
+  celsiusToWholeFahrenheit,
   deriveCurrentState,
   fahrenheitToCelsius,
   fanValueToMode,
@@ -76,7 +76,7 @@ interface ShadowState {
   at?: number; // ambient temperature (F)
   hs?: number; // heat setpoint (F)
   cs?: number; // cool setpoint (F)
-  sys?: number; // 0=off 1=heat 2=cool 3=auto
+  sys?: number; // 0=off 1=cool 2=heat 3=auto — verified live, see SYS_TO_TARGET_MODE
   fan?: number; // 0=on (continuous) 1=auto — verified live, see FAN_MODE_TO_VALUE
   hum?: number; // humidity
 }
@@ -161,7 +161,7 @@ export class AppCloudStateProvider implements ThermostatStateProvider {
     const thingId = await this.resolveThingId();
     const snapshot = await this.readShadowState(thingId);
     const mode = snapshot.targetHeatingCoolingState;
-    const fahrenheit = celsiusToFahrenheit(targetTemperatureCelsius);
+    const fahrenheit = celsiusToWholeFahrenheit(targetTemperatureCelsius);
 
     let desired: Record<string, unknown>;
     if (mode === 2) {

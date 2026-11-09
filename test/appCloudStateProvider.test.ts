@@ -250,7 +250,7 @@ test('setTargetTemperature in heat mode writes only the heat setpoint', async ()
   assert.equal(url.pathname, '/v3/shadow');
   assert.equal(url.searchParams.get('thingId'), 't-123');
   const desired = JSON.parse(url.searchParams.get('shadowNewValue') ?? '{}') as Record<string, unknown>;
-  assert.equal(desired.hs, 71.6);
+  assert.equal(desired.hs, 72);
   assert.equal(desired.cs, undefined, 'cool setpoint must not be touched in heat mode');
 });
 
@@ -266,7 +266,7 @@ test('setTargetTemperature in cool mode writes only the cool setpoint', async ()
   const put = fetchMock.calls.find((call) => call.method === 'PUT');
   assert.ok(put !== undefined, 'expected a PUT to /v3/shadow');
   const desired = JSON.parse(new URL(put.url).searchParams.get('shadowNewValue') ?? '{}') as Record<string, unknown>;
-  assert.equal(desired.cs, 71.6);
+  assert.equal(desired.cs, 72);
   assert.equal(desired.hs, undefined, 'heat setpoint must not be touched in cool mode');
 });
 
@@ -282,8 +282,8 @@ test('setTargetTemperature in auto mode writes both setpoints', async () => {
   const put = fetchMock.calls.find((call) => call.method === 'PUT');
   assert.ok(put !== undefined, 'expected a PUT to /v3/shadow');
   const desired = JSON.parse(new URL(put.url).searchParams.get('shadowNewValue') ?? '{}') as Record<string, unknown>;
-  assert.equal(desired.hs, 71.6);
-  assert.equal(desired.cs, 71.6);
+  assert.equal(desired.hs, 72);
+  assert.equal(desired.cs, 72);
 });
 
 test('setTargetTemperature while off throws StateProviderUnavailableError', async () => {

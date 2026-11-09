@@ -202,7 +202,7 @@ test('setTargetTemperature in heat mode writes only the heat setpoint', async ()
   const parsed = JSON.parse(update.published[0].payload) as {
     state: { desired: { hs?: number; cs?: number } };
   };
-  assert.equal(parsed.state.desired.hs, 71.6);
+  assert.equal(parsed.state.desired.hs, 72);
   assert.equal(parsed.state.desired.cs, undefined);
 });
 
@@ -222,7 +222,7 @@ test('setTargetTemperature in cool mode writes only the cool setpoint', async ()
   const parsed = JSON.parse(update.published[0].payload) as {
     state: { desired: { hs?: number; cs?: number } };
   };
-  assert.equal(parsed.state.desired.cs, 71.6);
+  assert.equal(parsed.state.desired.cs, 72);
   assert.equal(parsed.state.desired.hs, undefined);
 });
 
@@ -388,7 +388,7 @@ test('a setpoint write reuses the mode from a recent poll instead of re-reading'
   const update = clients[1];
   assert.ok(update.published[0].topic.endsWith('/shadow/update'));
   const parsed = JSON.parse(update.published[0].payload) as { state: { desired: { cs?: number; hs?: number } } };
-  assert.equal(parsed.state.desired.cs, 71.6, 'sys=1 is COOL, so the cool setpoint is written');
+  assert.equal(parsed.state.desired.cs, 72, 'sys=1 is COOL, so the cool setpoint is written');
   assert.equal(parsed.state.desired.hs, undefined);
 });
 
@@ -422,7 +422,7 @@ test('commanding a mode primes the cache for a following setpoint write', async 
 
   assert.equal(clients.length, 2, 'no shadow/get needed: the mode was just commanded');
   const parsed = JSON.parse(clients[1].published[0].payload) as { state: { desired: { hs?: number; cs?: number } } };
-  assert.equal(parsed.state.desired.hs, 71.6, 'heat mode writes the heat setpoint');
+  assert.equal(parsed.state.desired.hs, 72, 'heat mode writes the heat setpoint');
   assert.equal(parsed.state.desired.cs, undefined);
 });
 

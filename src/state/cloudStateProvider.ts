@@ -7,7 +7,7 @@ import {
   HOMEKIT_TO_SYS,
   SYS_TO_TARGET_MODE,
   FAN_MODE_TO_VALUE,
-  celsiusToFahrenheit,
+  celsiusToWholeFahrenheit,
   deriveCurrentState,
   fahrenheitToCelsius,
   fanValueToMode,
@@ -161,7 +161,7 @@ export class CloudStateProvider implements ThermostatStateProvider {
    * @throws {StateProviderUnavailableError} when the shadow exchanges fail.
    */
   public async setTargetTemperature(targetTemperatureCelsius: number): Promise<void> {
-    const fahrenheit = celsiusToFahrenheit(targetTemperatureCelsius);
+    const fahrenheit = celsiusToWholeFahrenheit(targetTemperatureCelsius);
     const mode = await this.getTargetModeForWrite();
 
     if (mode === 2) {

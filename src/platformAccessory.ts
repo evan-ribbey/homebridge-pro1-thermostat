@@ -377,6 +377,19 @@ export class Pro1ThermostatAccessory {
     return new Error(`${this.device.name} is not responding`);
   }
 
+  /**
+   * Log a failed write and turn it into the HAP status error HomeKit expects.
+   * Rethrowing the provider's error made HAP log an "Unhandled error thrown
+   * inside write handler" warning with a full stack trace for an ordinary
+   * failure such as the cloud being unreachable.
+   */
+  private writeFailure(operation: string, error: unknown): Error {
+    this.platform.log.warn(
+      `[${this.device.name}] ${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return this.communicationFailure();
+  }
+
   /** True once the provider has failed enough consecutive polls to give up. */
   private isUnreachable(): boolean {
     return this.consecutiveFailures >= FAILURES_BEFORE_NO_RESPONSE;
@@ -416,7 +429,7 @@ export class Pro1ThermostatAccessory {
         this.platform.log.debug(`[${this.device.name}] setTargetHeatingCoolingState not supported by provider: ${error.message}`);
         return; // Do not crash; HomeKit keeps the previous value.
       }
-      throw error;
+      throw this.writeFailure('setTargetHeatingCoolingState', error);
     }
     this.recordCommand('TargetHeatingCoolingState', mode);
   }
@@ -446,7 +459,7 @@ export class Pro1ThermostatAccessory {
         this.platform.log.debug(`[${this.device.name}] setTargetTemperature not supported by provider: ${error.message}`);
         return; // Do not crash; HomeKit keeps the previous value.
       }
-      throw error;
+      throw this.writeFailure('setTargetTemperature', error);
     }
     this.recordCommand('TargetTemperature', celsius);
   }
@@ -494,7 +507,7 @@ export class Pro1ThermostatAccessory {
         this.platform.log.debug(`[${this.device.name}] setFanMode not supported by provider: ${error.message}`);
         return; // Do not crash; HomeKit keeps the previous value.
       }
-      throw error;
+      throw this.writeFailure('setFanMode', error);
     }
     this.recordCommand('FanActive', active);
   }

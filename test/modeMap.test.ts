@@ -6,6 +6,7 @@ import {
   HOMEKIT_TO_SYS,
   SYS_TO_TARGET_MODE,
   celsiusToFahrenheit,
+  celsiusToWholeFahrenheit,
   deriveCurrentState,
   fahrenheitToCelsius,
   fanValueToMode,
@@ -103,4 +104,13 @@ test('fan polarity stays inverted: 0 is on (continuous) and 1 is auto', () => {
 test('fan mode is unknown for an absent or unrecognised fan value', () => {
   assert.equal(fanValueToMode(null), null);
   assert.equal(fanValueToMode(42), null);
+});
+
+test('celsiusToWholeFahrenheit rounds to the whole degrees the device stores', () => {
+  // A fractional write never matches the whole-degree `reported` value, so the
+  // shadow `desired` entry was never cleared and could revert a wall change.
+  assert.equal(celsiusToWholeFahrenheit(22), 72, '71.6 F rounds up');
+  assert.equal(celsiusToWholeFahrenheit(24), 75, '75.2 F rounds down');
+  assert.equal(celsiusToWholeFahrenheit(7), 45);
+  assert.ok(Number.isInteger(celsiusToWholeFahrenheit(21.5)));
 });

@@ -619,3 +619,36 @@ test('a device reporting auto mode is not pushed to HomeKit as an unsupported va
   const pushed = accessory.getService('Thermostat')!.getCharacteristic('TargetHeatingCoolingState').updatedValues;
   assert.deepEqual(pushed, []);
 });
+
+test('a failed write surfaces as a communication failure and is logged once', async () => {
+  const warnings: string[] = [];
+  const provider: ThermostatStateProvider = {
+    readState: async () => snapshot(),
+    setTargetTemperature: async () => {
+      throw new StateProviderUnavailableError('thermostat is off');
+    },
+    setTargetHeatingCoolingState: async () => {
+      throw new StateProviderUnavailableError('down');
+    },
+    setFanMode: async () => {
+      throw new StateProviderUnavailableError('down');
+    },
+  };
+  const accessory = new FakeAccessory('Living Room', 'uuid-192.0.2.1');
+  const platform = makePlatform();
+  (platform.log as unknown as { warn: (msg: string) => void }).warn = (msg: string) => {
+    warnings.push(msg);
+  };
+  const thermostat = new Pro1ThermostatAccessory(platform, accessory as unknown as PlatformAccessory, DEVICE, provider);
+
+  // Rethrowing the provider error made HAP log an "Unhandled error thrown
+  // inside write handler" stack trace; the HAP status error does not.
+  await assert.rejects(() => thermostat.setTargetTemperature(24), (error: Error) => {
+    assert.ok(!(error instanceof StateProviderUnavailableError), 'provider error must not leak to HAP');
+    return true;
+  });
+  await assert.rejects(() => thermostat.setTargetHeatingCoolingState(1));
+  await assert.rejects(() => thermostat.setFanActive(1));
+  assert.equal(warnings.length, 3);
+  assert.match(warnings[0], /thermostat is off/);
+});

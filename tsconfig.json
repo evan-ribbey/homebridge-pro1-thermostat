@@ -9,7 +9,7 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "strict": true,
-    "declaration": true,
+    "declaration": false,
     "skipLibCheck": true,
     "outDir": "dist",
     "sourceMap": true,

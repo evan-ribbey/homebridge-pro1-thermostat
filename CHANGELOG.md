@@ -4,12 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.6] - 2026-11-13
+
+### Changed
+
+- The npm package now contains only the compiled JavaScript. Type declarations
+  and source maps are no longer included, which cuts the download from about
+  62 kB to 38 kB. Nothing imports this plugin's types, and the source maps
+  pointed at source files that were never shipped.
+- `mqtt` now requires 5.16.1 or later.
+- Development tooling updated (ESLint, typescript-eslint, rimraf), and the
+  unused `ts-node` dev dependency was removed. These don't affect the
+  installed plugin.
+
 ## [0.2.5] - 2026-11-08
 
 ### Added
 
-- A Ko-fi donation link. The Homebridge UI now shows a donate (heart) button on
-  the plugin card, and the GitHub repository shows a Sponsor button.
+- A `funding` field in `package.json`.
 
 ### Fixed
 
@@ -105,6 +117,7 @@ All notable changes to this project are documented here. The format follows
 - Fan mode control through a Fan v2 service: On runs the blower
   continuously, and Off returns it to Auto.
 
+[0.2.6]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/evan-ribbey/homebridge-pro1-thermostat/compare/v0.2.2...v0.2.3

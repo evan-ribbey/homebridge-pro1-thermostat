@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 
 const REQUIRED = ['dist/index.js', 'certs/aws-iot-classic-root.pem', 'config.schema.json'];
 const ALLOWED = [
-  /^dist\/.+\.(js|d\.ts|js\.map)$/,
+  /^dist\/.+\.js$/,
   /^certs\/aws-iot-classic-root\.pem$/,
   /^(config\.schema\.json|package\.json|README\.md|LICENSE|CHANGELOG\.md)$/,
 ];
